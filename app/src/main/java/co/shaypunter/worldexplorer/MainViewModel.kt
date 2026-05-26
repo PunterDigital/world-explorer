@@ -26,17 +26,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Naive sum of (π·r²) across all explored points, normalised against
-     * Earth's total surface area. Because dedup keeps points at least half a
-     * radius apart, neighbouring circles can overlap and this slightly
-     * overcounts — but for a planet-sized denominator that's fine; nobody is
-     * going to hit even 0.001 % through a rounding error.
+     * Earth's land surface area (oceans excluded). Because dedup keeps points
+     * at least half a radius apart, neighbouring circles can overlap and this
+     * slightly overcounts — but for a planet-sized denominator that's fine.
+     *
+     * Note: points recorded over water (ferries, beaches, etc.) still count
+     * toward the numerator; correctly masking the numerator would need an
+     * offline land/sea grid, which isn't worth the storage today.
      */
     val percentExplored: StateFlow<Double> = points
         .map { pts ->
             val coveredMeters = pts.sumOf { p ->
                 Math.PI * p.radiusMeters.toDouble() * p.radiusMeters.toDouble()
             }
-            (coveredMeters / EARTH_SURFACE_AREA_M2 * 100.0).coerceIn(0.0, 100.0)
+            (coveredMeters / EARTH_LAND_AREA_M2 * 100.0).coerceIn(0.0, 100.0)
         }
         .stateIn(
             scope = viewModelScope,
@@ -45,6 +48,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
 
     companion object {
-        private const val EARTH_SURFACE_AREA_M2 = 510_072_000_000_000.0
+        // Earth's land surface area, ~148,940,000 km² (excludes oceans and seas).
+        private const val EARTH_LAND_AREA_M2 = 148_940_000_000_000.0
     }
 }
