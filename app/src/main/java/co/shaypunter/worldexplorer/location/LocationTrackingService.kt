@@ -47,35 +47,44 @@ class LocationTrackingService : LifecycleService() {
 
     private lateinit var fusedClient: FusedLocationProviderClient
     private lateinit var repository: ExploredRepository
+    private lateinit var prefs: TrackingPreferences
 
-    // In-memory cache of the previous accepted fix, used to fill gaps with
-    // straight-line interpolation when a single update spans a large distance
-    // (driving on a motorway, GPS signal returning after a tunnel, etc.).
-    // Reset to null on service create — first fix after start never interpolates.
+    // Previous-fix coordinates used to fill gaps with straight-line
+    // interpolation when a single update spans a large distance. Backed by
+    // SharedPreferences so the cache survives service restarts (Doze, OEM
+    // kills, app process death) — without that, the first fix after every
+    // restart skips interpolation and a long drive ends up dotted.
     private var lastFixLat: Double? = null
     private var lastFixLon: Double? = null
+    private var lastFixTimestamp: Long = 0L
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             val location = result.lastLocation ?: return
             // Snapshot previous-fix coordinates on the caller thread before we
-            // hand off to IO, then advance the cache so back-to-back callbacks
-            // don't both interpolate from the same starting point.
+            // hand off to IO, then advance both the in-memory cache and the
+            // persisted copy so a service restart between this callback and
+            // the next still has a starting point.
             val prevLat = lastFixLat
             val prevLon = lastFixLon
+            val prevTs = lastFixTimestamp
             val curLat = location.latitude
             val curLon = location.longitude
             val timestamp = location.time
             lastFixLat = curLat
             lastFixLon = curLon
+            lastFixTimestamp = timestamp
+            prefs.setLastFix(curLat, curLon, timestamp)
 
             lifecycleScope.launch(Dispatchers.IO) {
                 if (prevLat != null && prevLon != null) {
                     val results = FloatArray(1)
                     Location.distanceBetween(prevLat, prevLon, curLat, curLon, results)
                     val gapMeters = results[0]
+                    val timeGapMs = timestamp - prevTs
 
-                    if (gapMeters in INTERPOLATION_THRESHOLD_M..MAX_INTERPOLATION_DISTANCE_M) {
+                    if (gapMeters in INTERPOLATION_THRESHOLD_M..MAX_INTERPOLATION_DISTANCE_M &&
+                        timeGapMs in 0..MAX_INTERPOLATION_TIME_MS) {
                         val steps = ceil(gapMeters / INTERPOLATION_STEP_M).toInt()
                         for (i in 1 until steps) {
                             val t = i.toDouble() / steps
@@ -105,6 +114,12 @@ class LocationTrackingService : LifecycleService() {
         super.onCreate()
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
         repository = ExploredRepository(AppDatabase.get(this).exploredPointDao())
+        prefs = TrackingPreferences(this)
+        prefs.lastFix?.let { fix ->
+            lastFixLat = fix.latitude
+            lastFixLon = fix.longitude
+            lastFixTimestamp = fix.timestamp
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -225,6 +240,11 @@ class LocationTrackingService : LifecycleService() {
         // line (flight, GPS jump, suspended app over hours). Skip interpolation
         // and just record the current fix.
         private const val MAX_INTERPOLATION_DISTANCE_M = 5_000f
+        // Belt-and-braces time cap. The service can be killed and rehydrated
+        // hours later; without this gate, a stale prefs entry from yesterday
+        // could become the "previous fix" and we'd paint a straight line
+        // across a winding day-long path.
+        private const val MAX_INTERPOLATION_TIME_MS = 5L * 60L * 1000L
 
         fun ensureChannel(context: Context) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -250,7 +270,10 @@ class LocationTrackingService : LifecycleService() {
         }
 
         fun stop(context: Context) {
-            TrackingPreferences(context).trackingEnabled = false
+            TrackingPreferences(context).apply {
+                trackingEnabled = false
+                clearLastFix()
+            }
             val intent = Intent(context, LocationTrackingService::class.java).apply {
                 action = ACTION_STOP
             }
