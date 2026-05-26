@@ -13,6 +13,7 @@ import android.location.Location
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import kotlin.math.ceil
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -161,7 +162,7 @@ class LocationTrackingService : LifecycleService() {
         }
 
         val request = LocationRequest.Builder(
-            Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+            Priority.PRIORITY_HIGH_ACCURACY,
             UPDATE_INTERVAL_MS
         )
             .setMinUpdateIntervalMillis(FASTEST_INTERVAL_MS)
@@ -175,10 +176,42 @@ class LocationTrackingService : LifecycleService() {
             locationCallback,
             Looper.getMainLooper()
         )
+        acquireWakeLock()
     }
 
     private fun stopUpdates() {
         fusedClient.removeLocationUpdates(locationCallback)
+        releaseWakeLock()
+    }
+
+    private var wakeLock: PowerManager.WakeLock? = null
+
+    /**
+     * Hold a partial wake lock for the lifetime of an active tracking session.
+     * Without this the CPU sleeps with the screen and location callbacks get
+     * batched at Doze maintenance windows — which is what causes the
+     * "three disconnected trails on a drive" symptom: the provider only
+     * delivers fixes when the OS decides to wake up.
+     *
+     * Foreground-service notification + wake lock together survive Doze;
+     * battery cost is small while the user is actually moving and zero when
+     * the service is stopped.
+     */
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "WorldExplorer:LocationTracking"
+        ).apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
     }
 
     private fun startInForeground() {

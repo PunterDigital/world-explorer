@@ -23,6 +23,10 @@ class TrackingPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_BG_PROMPTED, false)
         set(value) = prefs.edit { putBoolean(KEY_BG_PROMPTED, value) }
 
+    var batteryOptPrompted: Boolean
+        get() = prefs.getBoolean(KEY_BATT_OPT_PROMPTED, false)
+        set(value) = prefs.edit { putBoolean(KEY_BATT_OPT_PROMPTED, value) }
+
     /**
      * Last accepted location fix, persisted so interpolation can bridge gaps
      * across service restarts (Doze, OEM kills, app process death). Null until
@@ -63,6 +67,7 @@ class TrackingPreferences(context: Context) {
         private const val PREFS_NAME = "world_explorer_prefs"
         private const val KEY_TRACKING_ENABLED = "tracking_enabled"
         private const val KEY_BG_PROMPTED = "background_location_prompted"
+        private const val KEY_BATT_OPT_PROMPTED = "battery_opt_prompted"
         private const val KEY_LAST_LAT = "last_fix_lat_bits"
         private const val KEY_LAST_LON = "last_fix_lon_bits"
         private const val KEY_LAST_TS = "last_fix_timestamp"

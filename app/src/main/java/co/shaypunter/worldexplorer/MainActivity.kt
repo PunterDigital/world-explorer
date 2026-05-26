@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -206,6 +207,43 @@ class MainActivity : AppCompatActivity() {
             updateTrackingButton()
         }
         maybeRequestBackgroundLocation()
+        maybeRequestIgnoreBatteryOptimisations()
+    }
+
+    /**
+     * On many OEMs the OS will throttle our foreground service to nothing
+     * while the screen is off — Doze maintenance windows can be 15+ minutes
+     * apart — which produces the "disconnected micro-trails" symptom while
+     * driving. Asking the user to whitelist the app is the only reliable
+     * countermeasure short of a true background service.
+     */
+    private fun maybeRequestIgnoreBatteryOptimisations() {
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        if (pm.isIgnoringBatteryOptimizations(packageName)) return
+        if (prefs.batteryOptPrompted) return
+        prefs.batteryOptPrompted = true
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.batt_opt_title)
+            .setMessage(R.string.batt_opt_message)
+            .setPositiveButton(R.string.batt_opt_grant) { _, _ ->
+                try {
+                    startActivity(
+                        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                            data = Uri.parse("package:$packageName")
+                        }
+                    )
+                } catch (_: Throwable) {
+                    // Some OEMs hide this screen — fall back to app settings.
+                    startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.fromParts("package", packageName, null)
+                        }
+                    )
+                }
+            }
+            .setNegativeButton(R.string.batt_opt_skip, null)
+            .show()
     }
 
     /**
