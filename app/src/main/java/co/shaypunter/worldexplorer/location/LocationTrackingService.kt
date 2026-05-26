@@ -9,9 +9,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.location.Location
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
+import kotlin.math.ceil
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
@@ -46,15 +48,54 @@ class LocationTrackingService : LifecycleService() {
     private lateinit var fusedClient: FusedLocationProviderClient
     private lateinit var repository: ExploredRepository
 
+    // In-memory cache of the previous accepted fix, used to fill gaps with
+    // straight-line interpolation when a single update spans a large distance
+    // (driving on a motorway, GPS signal returning after a tunnel, etc.).
+    // Reset to null on service create — first fix after start never interpolates.
+    private var lastFixLat: Double? = null
+    private var lastFixLon: Double? = null
+
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             val location = result.lastLocation ?: return
+            // Snapshot previous-fix coordinates on the caller thread before we
+            // hand off to IO, then advance the cache so back-to-back callbacks
+            // don't both interpolate from the same starting point.
+            val prevLat = lastFixLat
+            val prevLon = lastFixLon
+            val curLat = location.latitude
+            val curLon = location.longitude
+            val timestamp = location.time
+            lastFixLat = curLat
+            lastFixLon = curLon
+
             lifecycleScope.launch(Dispatchers.IO) {
+                if (prevLat != null && prevLon != null) {
+                    val results = FloatArray(1)
+                    Location.distanceBetween(prevLat, prevLon, curLat, curLon, results)
+                    val gapMeters = results[0]
+
+                    if (gapMeters in INTERPOLATION_THRESHOLD_M..MAX_INTERPOLATION_DISTANCE_M) {
+                        val steps = ceil(gapMeters / INTERPOLATION_STEP_M).toInt()
+                        for (i in 1 until steps) {
+                            val t = i.toDouble() / steps
+                            val lat = prevLat + (curLat - prevLat) * t
+                            val lon = prevLon + (curLon - prevLon) * t
+                            repository.recordIfNew(
+                                latitude = lat,
+                                longitude = lon,
+                                radiusMeters = UNLOCK_RADIUS_METERS,
+                                timestamp = timestamp
+                            )
+                        }
+                    }
+                }
+
                 repository.recordIfNew(
-                    latitude = location.latitude,
-                    longitude = location.longitude,
+                    latitude = curLat,
+                    longitude = curLon,
                     radiusMeters = UNLOCK_RADIUS_METERS,
-                    timestamp = location.time
+                    timestamp = timestamp
                 )
             }
         }
@@ -172,6 +213,18 @@ class LocationTrackingService : LifecycleService() {
         private const val FASTEST_INTERVAL_MS = 15_000L
         private const val MIN_DISTANCE_M = 25f
         const val UNLOCK_RADIUS_METERS = 200f
+
+        // Fill straight-line gaps between consecutive fixes when they're more
+        // than this far apart. 1.5× radius means circles wouldn't visually
+        // touch without interpolation.
+        private const val INTERPOLATION_THRESHOLD_M = 300f
+        // Spacing between interpolated points. 75 % of radius keeps healthy
+        // overlap so the trail looks continuous.
+        private const val INTERPOLATION_STEP_M = 150f
+        // Above this, the user almost certainly didn't travel in a straight
+        // line (flight, GPS jump, suspended app over hours). Skip interpolation
+        // and just record the current fix.
+        private const val MAX_INTERPOLATION_DISTANCE_M = 5_000f
 
         fun ensureChannel(context: Context) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
