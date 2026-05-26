@@ -1,0 +1,204 @@
+package co.shaypunter.worldexplorer.location
+
+import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.IBinder
+import android.os.Looper
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleService
+import androidx.lifecycle.lifecycleScope
+import co.shaypunter.worldexplorer.MainActivity
+import co.shaypunter.worldexplorer.R
+import co.shaypunter.worldexplorer.WorldExplorerApp
+import co.shaypunter.worldexplorer.data.AppDatabase
+import co.shaypunter.worldexplorer.data.ExploredRepository
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.Granularity
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+
+/**
+ * Foreground service that polls the fused location provider on a battery-friendly
+ * cadence and writes new exploration points into the database.
+ *
+ * The defaults below favour endurance over precision:
+ *   - PRIORITY_BALANCED_POWER_ACCURACY uses cell/wifi when adequate
+ *   - 30s interval, 15s fastest, 25m minimum displacement
+ *   - dedup at half-radius keeps the DB small while standing still
+ */
+class LocationTrackingService : LifecycleService() {
+
+    private lateinit var fusedClient: FusedLocationProviderClient
+    private lateinit var repository: ExploredRepository
+
+    private val locationCallback = object : LocationCallback() {
+        override fun onLocationResult(result: LocationResult) {
+            val location = result.lastLocation ?: return
+            lifecycleScope.launch(Dispatchers.IO) {
+                repository.recordIfNew(
+                    latitude = location.latitude,
+                    longitude = location.longitude,
+                    radiusMeters = UNLOCK_RADIUS_METERS,
+                    timestamp = location.time
+                )
+            }
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        fusedClient = LocationServices.getFusedLocationProviderClient(this)
+        repository = ExploredRepository(AppDatabase.get(this).exploredPointDao())
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
+        startInForeground()
+
+        if (intent?.action == ACTION_STOP) {
+            stopUpdates()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        startUpdates()
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent): IBinder? {
+        super.onBind(intent)
+        return null
+    }
+
+    override fun onDestroy() {
+        stopUpdates()
+        super.onDestroy()
+    }
+
+    private fun startUpdates() {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            stopSelf()
+            return
+        }
+
+        val request = LocationRequest.Builder(
+            Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+            UPDATE_INTERVAL_MS
+        )
+            .setMinUpdateIntervalMillis(FASTEST_INTERVAL_MS)
+            .setMinUpdateDistanceMeters(MIN_DISTANCE_M)
+            .setGranularity(Granularity.GRANULARITY_PERMISSION_LEVEL)
+            .setWaitForAccurateLocation(false)
+            .build()
+
+        fusedClient.requestLocationUpdates(
+            request,
+            locationCallback,
+            Looper.getMainLooper()
+        )
+    }
+
+    private fun stopUpdates() {
+        fusedClient.removeLocationUpdates(locationCallback)
+    }
+
+    private fun startInForeground() {
+        val openAppIntent = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val stopIntent = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, LocationTrackingService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val notification: Notification =
+            NotificationCompat.Builder(this, WorldExplorerApp.TRACKING_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_explore)
+                .setContentTitle(getString(R.string.tracking_title))
+                .setContentText(getString(R.string.tracking_text))
+                .setContentIntent(openAppIntent)
+                .setOngoing(true)
+                .setSilent(true)
+                .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .addAction(0, getString(R.string.tracking_stop), stopIntent)
+                .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    companion object {
+        const val ACTION_STOP = "co.shaypunter.worldexplorer.action.STOP_TRACKING"
+        private const val NOTIFICATION_ID = 4242
+
+        private const val UPDATE_INTERVAL_MS = 30_000L
+        private const val FASTEST_INTERVAL_MS = 15_000L
+        private const val MIN_DISTANCE_M = 25f
+        const val UNLOCK_RADIUS_METERS = 100f
+
+        fun ensureChannel(context: Context) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+            val manager =
+                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (manager.getNotificationChannel(WorldExplorerApp.TRACKING_CHANNEL_ID) != null) return
+            val channel = NotificationChannel(
+                WorldExplorerApp.TRACKING_CHANNEL_ID,
+                "Location tracking",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Ongoing notification shown while exploration tracking is active."
+                setShowBadge(false)
+            }
+            manager.createNotificationChannel(channel)
+        }
+
+        fun start(context: Context) {
+            ensureChannel(context)
+            val intent = Intent(context, LocationTrackingService::class.java)
+            ContextCompat.startForegroundService(context, intent)
+        }
+
+        fun stop(context: Context) {
+            val intent = Intent(context, LocationTrackingService::class.java).apply {
+                action = ACTION_STOP
+            }
+            context.startService(intent)
+        }
+    }
+}

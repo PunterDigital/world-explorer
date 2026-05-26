@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">World Explorer</string>
+
+    <string name="tracking_title">Exploring the world</string>
+    <string name="tracking_text">Tracking your location to unlock new areas.</string>
+    <string name="tracking_stop">Stop</string>
+
+    <string name="stats_initial">0 areas unlocked</string>
+    <string name="stats_count">%1$d areas unlocked</string>
+
+    <string name="start_tracking">Start tracking</string>
+    <string name="stop_tracking">Stop tracking</string>
+    <string name="center_on_me">Centre on my location</string>
+
+    <string name="no_location_yet">No location fix yet — give it a moment.</string>
+
+    <string name="permission_needed_title">Location needed</string>
+    <string name="permission_needed_message">World Explorer needs your location to reveal the world as you travel. Grant location permission in Settings to continue.</string>
+    <string name="open_settings">Open settings</string>
+</resources>
