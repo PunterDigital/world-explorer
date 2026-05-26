@@ -6,8 +6,8 @@
     <string name="tracking_text">Tracking your location to unlock new areas.</string>
     <string name="tracking_stop">Stop</string>
 
-    <string name="stats_initial">0 areas unlocked</string>
-    <string name="stats_count">%1$d areas unlocked</string>
+    <string name="stats_initial">00.000% explored</string>
+    <string name="stats_percent">%1$s explored</string>
 
     <string name="start_tracking">Start tracking</string>
     <string name="stop_tracking">Stop tracking</string>

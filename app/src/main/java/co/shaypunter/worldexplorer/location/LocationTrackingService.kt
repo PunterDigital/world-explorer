@@ -171,7 +171,7 @@ class LocationTrackingService : LifecycleService() {
         private const val UPDATE_INTERVAL_MS = 30_000L
         private const val FASTEST_INTERVAL_MS = 15_000L
         private const val MIN_DISTANCE_M = 25f
-        const val UNLOCK_RADIUS_METERS = 100f
+        const val UNLOCK_RADIUS_METERS = 200f
 
         fun ensureChannel(context: Context) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return

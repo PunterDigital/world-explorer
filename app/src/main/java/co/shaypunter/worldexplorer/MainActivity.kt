@@ -23,6 +23,7 @@ import co.shaypunter.worldexplorer.location.LocationTrackingService
 import co.shaypunter.worldexplorer.ui.FogOverlay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import java.util.Locale
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
@@ -161,9 +162,10 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 launch {
-                    viewModel.count.collectLatest { count ->
+                    viewModel.percentExplored.collectLatest { pct ->
+                        val formatted = String.format(Locale.US, "%06.3f%%", pct)
                         binding.statsText.text =
-                            getString(R.string.stats_count, count)
+                            getString(R.string.stats_percent, formatted)
                     }
                 }
             }

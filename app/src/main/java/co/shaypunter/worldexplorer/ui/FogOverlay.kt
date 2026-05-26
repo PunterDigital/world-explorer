@@ -30,7 +30,7 @@ class FogOverlay : Overlay() {
     private var points: List<ExploredPoint> = emptyList()
 
     private val fogPaint = Paint().apply {
-        color = Color.argb(FOG_ALPHA, 12, 14, 28)
+        color = Color.argb(FOG_ALPHA, 0, 0, 0)
         style = Paint.Style.FILL
     }
 
@@ -120,6 +120,6 @@ class FogOverlay : Overlay() {
     }
 
     companion object {
-        private const val FOG_ALPHA = 215
+        private const val FOG_ALPHA = 250
     }
 }
