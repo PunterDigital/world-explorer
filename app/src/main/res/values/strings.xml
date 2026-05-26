@@ -18,4 +18,10 @@
     <string name="permission_needed_title">Location needed</string>
     <string name="permission_needed_message">World Explorer needs your location to reveal the world as you travel. Grant location permission in Settings to continue.</string>
     <string name="open_settings">Open settings</string>
+
+    <string name="background_location_title">Keep exploring in the background</string>
+    <string name="background_location_message">To keep unlocking areas while the app is closed or your screen is off, please choose <b>Allow all the time</b> on the next screen.</string>
+    <string name="background_location_settings_message">To track in the background, open Permissions → Location and switch to <b>Allow all the time</b>.</string>
+    <string name="background_location_grant">Continue</string>
+    <string name="background_location_skip">Not now</string>
 </resources>

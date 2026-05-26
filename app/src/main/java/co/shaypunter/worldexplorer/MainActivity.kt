@@ -17,6 +17,7 @@ import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import co.shaypunter.worldexplorer.data.TrackingPreferences
 import co.shaypunter.worldexplorer.databinding.ActivityMainBinding
 import co.shaypunter.worldexplorer.location.LocationTrackingService
 import co.shaypunter.worldexplorer.ui.FogOverlay
@@ -51,6 +52,19 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission()
     ) { /* Best effort; tracking still works without notification visibility. */ }
 
+    private val backgroundLocationLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // On 11+ the system surfaces a "Change in settings" link; on 10 it
+            // shows a normal allow/deny. Either way, if the user said no, fall
+            // back to the explainer that takes them to the app's settings page.
+            showBackgroundLocationExplainer()
+        }
+    }
+
+    private val prefs by lazy { TrackingPreferences(this) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -59,6 +73,7 @@ class MainActivity : AppCompatActivity() {
         setupMap()
         setupControls()
         observeState()
+        updateTrackingButton()
 
         if (hasLocationPermission()) {
             onLocationPermissionGranted()
@@ -165,13 +180,11 @@ class MainActivity : AppCompatActivity() {
             )
             return
         }
-        val turnOn = !isTracking
-        if (turnOn) {
+        if (!isTracking) {
             LocationTrackingService.start(this)
         } else {
             LocationTrackingService.stop(this)
         }
-        isTracking = turnOn
         updateTrackingButton()
     }
 
@@ -188,9 +201,51 @@ class MainActivity : AppCompatActivity() {
     private fun onLocationPermissionGranted() {
         if (!isTracking) {
             LocationTrackingService.start(this)
-            isTracking = true
             updateTrackingButton()
         }
+        maybeRequestBackgroundLocation()
+    }
+
+    /**
+     * On Android 10+ the foreground service only keeps receiving location
+     * callbacks reliably when the user upgrades to "Allow all the time".
+     * Ask once, after foreground location is granted, and remember that we
+     * asked so we don't pester on every launch.
+     */
+    private fun maybeRequestBackgroundLocation() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        if (ContextCompat.checkSelfPermission(
+                this, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        ) return
+        if (prefs.backgroundLocationPrompted) return
+
+        prefs.backgroundLocationPrompted = true
+        AlertDialog.Builder(this)
+            .setTitle(R.string.background_location_title)
+            .setMessage(R.string.background_location_message)
+            .setPositiveButton(R.string.background_location_grant) { _, _ ->
+                backgroundLocationLauncher.launch(
+                    Manifest.permission.ACCESS_BACKGROUND_LOCATION
+                )
+            }
+            .setNegativeButton(R.string.background_location_skip, null)
+            .show()
+    }
+
+    private fun showBackgroundLocationExplainer() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.background_location_title)
+            .setMessage(R.string.background_location_settings_message)
+            .setPositiveButton(R.string.open_settings) { _, _ ->
+                startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.fromParts("package", packageName, null)
+                    }
+                )
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun hasLocationPermission(): Boolean {
@@ -219,5 +274,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private var isTracking: Boolean = false
+    private val isTracking: Boolean
+        get() = prefs.trackingEnabled
 }

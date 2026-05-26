@@ -21,6 +21,7 @@ import co.shaypunter.worldexplorer.R
 import co.shaypunter.worldexplorer.WorldExplorerApp
 import co.shaypunter.worldexplorer.data.AppDatabase
 import co.shaypunter.worldexplorer.data.ExploredRepository
+import co.shaypunter.worldexplorer.data.TrackingPreferences
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.Granularity
 import com.google.android.gms.location.LocationCallback
@@ -190,11 +191,13 @@ class LocationTrackingService : LifecycleService() {
 
         fun start(context: Context) {
             ensureChannel(context)
+            TrackingPreferences(context).trackingEnabled = true
             val intent = Intent(context, LocationTrackingService::class.java)
             ContextCompat.startForegroundService(context, intent)
         }
 
         fun stop(context: Context) {
+            TrackingPreferences(context).trackingEnabled = false
             val intent = Intent(context, LocationTrackingService::class.java).apply {
                 action = ACTION_STOP
             }
