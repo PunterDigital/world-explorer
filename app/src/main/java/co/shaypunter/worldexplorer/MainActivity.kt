@@ -129,13 +129,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupMap() {
+        // Seed the map with the user's last known position (persisted from a
+        // previous run) so they open straight onto a familiar view instead of
+        // a global default. If we've never had a fix, fall back to a neutral
+        // overview zoom rather than a hard-coded city.
+        val seed = prefs.lastFix
+        val initialCenter = seed?.let { GeoPoint(it.latitude, it.longitude) }
+            ?: GeoPoint(20.0, 0.0)
+        val initialZoom = if (seed != null) 16.0 else 3.0
+
         binding.mapView.apply {
             setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
-            controller.setZoom(16.0)
-            // Default to a roughly central view; the location overlay will recentre
-            // as soon as a fix arrives.
-            controller.setCenter(GeoPoint(51.5074, -0.1278))
+            controller.setZoom(initialZoom)
+            controller.setCenter(initialCenter)
             minZoomLevel = 3.0
             maxZoomLevel = 19.0
             isTilesScaledToDpi = true
@@ -147,7 +154,16 @@ class MainActivity : AppCompatActivity() {
             binding.mapView
         ).apply {
             enableMyLocation()
-            // Don't follow by default — let the user pan freely.
+            // Once a real fix comes in, animate to it so the map reflects
+            // where the user actually is now — this fires on a worker thread,
+            // so the actual map operations are posted back to the UI thread.
+            runOnFirstFix {
+                val fresh = myLocation ?: return@runOnFirstFix
+                binding.mapView.post {
+                    binding.mapView.controller.animateTo(fresh)
+                    binding.mapView.controller.setZoom(17.0)
+                }
+            }
         }
         binding.mapView.overlays.add(myLocationOverlay)
     }
