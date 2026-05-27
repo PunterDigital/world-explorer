@@ -100,12 +100,17 @@ class FogOverlay : Overlay() {
             if (scratchPoint.x + radiusPx < 0 || scratchPoint.x - radiusPx > width) continue
             if (scratchPoint.y + radiusPx < 0 || scratchPoint.y - radiusPx > height) continue
 
+            // Keep the fully-cleared zone almost the full radius so adjacent
+            // discs along a trail merge into one continuous ribbon instead of
+            // showing the "beads-on-a-string" feather halos at their joins.
+            // The thin outer fade still rounds the outer boundary of the
+            // overall shape.
             cutoutPaint.shader = RadialGradient(
                 scratchPoint.x.toFloat(),
                 scratchPoint.y.toFloat(),
                 radiusPx,
                 intArrayOf(Color.BLACK, Color.BLACK, Color.TRANSPARENT),
-                floatArrayOf(0f, 0.7f, 1f),
+                floatArrayOf(0f, 0.95f, 1f),
                 Shader.TileMode.CLAMP
             )
             canvas.drawCircle(
