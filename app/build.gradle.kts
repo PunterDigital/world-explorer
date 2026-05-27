@@ -12,10 +12,24 @@ android {
         applicationId = "co.shaypunter.worldexplorer"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
 
         vectorDrawables.useSupportLibrary = true
+    }
+
+    signingConfigs {
+        // Use a checked-in debug keystore so every build (local, CI, anywhere)
+        // signs with the same key. Without this, each CI run generates a fresh
+        // keystore in ANDROID_USER_HOME and Android rejects updates with
+        // INSTALL_FAILED_UPDATE_INCOMPATIBLE. Debug-only, never used for
+        // release artefacts.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
@@ -29,6 +43,7 @@ android {
         }
         debug {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

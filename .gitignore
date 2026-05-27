@@ -14,6 +14,8 @@ captures/
 .DS_Store
 Thumbs.db
 
-# Keystores
+# Keystores — release keys only; the debug keystore at app/debug.keystore
+# is intentionally checked in so every build signs consistently.
 *.jks
 *.keystore
+!app/debug.keystore
