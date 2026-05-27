@@ -59,6 +59,9 @@ class LocationTrackingService : LifecycleService() {
     private var lastFixLon: Double? = null
     private var lastFixTimestamp: Long = 0L
 
+    /** True while the activity is in STARTED state; drives the polling cadence. */
+    private var foregroundActive: Boolean = false
+
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             val location = result.lastLocation ?: return
@@ -76,6 +79,11 @@ class LocationTrackingService : LifecycleService() {
             lastFixLon = curLon
             lastFixTimestamp = timestamp
             prefs.setLastFix(curLat, curLon, timestamp)
+
+            // Tighter dedup when the activity is visible so the trail extends
+            // smoothly with each fix; the default (half-radius) keeps the DB
+            // small while running in the background.
+            val dedup = if (foregroundActive) FG_DEDUP_METERS else UNLOCK_RADIUS_METERS * 0.5f
 
             lifecycleScope.launch(Dispatchers.IO) {
                 if (prevLat != null && prevLon != null) {
@@ -95,7 +103,8 @@ class LocationTrackingService : LifecycleService() {
                                 latitude = lat,
                                 longitude = lon,
                                 radiusMeters = UNLOCK_RADIUS_METERS,
-                                timestamp = timestamp
+                                timestamp = timestamp,
+                                dedupRadiusMeters = dedup.toDouble()
                             )
                         }
                     }
@@ -105,7 +114,8 @@ class LocationTrackingService : LifecycleService() {
                     latitude = curLat,
                     longitude = curLon,
                     radiusMeters = UNLOCK_RADIUS_METERS,
-                    timestamp = timestamp
+                    timestamp = timestamp,
+                    dedupRadiusMeters = dedup.toDouble()
                 )
             }
         }
@@ -127,13 +137,22 @@ class LocationTrackingService : LifecycleService() {
         super.onStartCommand(intent, flags, startId)
         startInForeground()
 
-        if (intent?.action == ACTION_STOP) {
-            stopUpdates()
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopUpdates()
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_FOREGROUND -> {
+                foregroundActive = true
+                startUpdates()
+            }
+            ACTION_BACKGROUND -> {
+                foregroundActive = false
+                startUpdates()
+            }
+            else -> startUpdates()
         }
-
-        startUpdates()
         return START_STICKY
     }
 
@@ -161,12 +180,25 @@ class LocationTrackingService : LifecycleService() {
             return
         }
 
+        // Cadence swaps based on whether the activity is currently visible.
+        // Foreground: aggressive updates so the user sees their discs land
+        // almost continuously as they walk; battery cost only applies while
+        // the screen is on. Background: the original endurance settings.
+        val interval = if (foregroundActive) FG_UPDATE_INTERVAL_MS else UPDATE_INTERVAL_MS
+        val fastest = if (foregroundActive) FG_FASTEST_INTERVAL_MS else FASTEST_INTERVAL_MS
+        val minDistance = if (foregroundActive) FG_MIN_DISTANCE_M else MIN_DISTANCE_M
+
+        // Remove any previous registration so the new cadence takes effect
+        // (requestLocationUpdates with the same callback doesn't replace —
+        // it stacks).
+        fusedClient.removeLocationUpdates(locationCallback)
+
         val request = LocationRequest.Builder(
             Priority.PRIORITY_HIGH_ACCURACY,
-            UPDATE_INTERVAL_MS
+            interval
         )
-            .setMinUpdateIntervalMillis(FASTEST_INTERVAL_MS)
-            .setMinUpdateDistanceMeters(MIN_DISTANCE_M)
+            .setMinUpdateIntervalMillis(fastest)
+            .setMinUpdateDistanceMeters(minDistance)
             .setGranularity(Granularity.GRANULARITY_PERMISSION_LEVEL)
             .setWaitForAccurateLocation(false)
             .build()
@@ -255,11 +287,27 @@ class LocationTrackingService : LifecycleService() {
 
     companion object {
         const val ACTION_STOP = "co.shaypunter.worldexplorer.action.STOP_TRACKING"
+        const val ACTION_FOREGROUND = "co.shaypunter.worldexplorer.action.FOREGROUND"
+        const val ACTION_BACKGROUND = "co.shaypunter.worldexplorer.action.BACKGROUND"
         private const val NOTIFICATION_ID = 4242
 
+        // Background (screen off or activity gone) cadence — endurance over
+        // precision.
         private const val UPDATE_INTERVAL_MS = 30_000L
         private const val FASTEST_INTERVAL_MS = 15_000L
         private const val MIN_DISTANCE_M = 25f
+
+        // Foreground (activity visible) cadence — aggressive so the trail
+        // appears to extend almost in real time as the user walks. Battery is
+        // fine because the screen has to be on for this branch to apply.
+        private const val FG_UPDATE_INTERVAL_MS = 1_000L
+        private const val FG_FASTEST_INTERVAL_MS = 500L
+        private const val FG_MIN_DISTANCE_M = 5f
+        // Tighter dedup while in foreground — new discs land every ~15 s of
+        // brisk walking instead of every ~70 s, which is what makes the trail
+        // feel like it's growing in real time.
+        private const val FG_DEDUP_METERS = 20f
+
         const val UNLOCK_RADIUS_METERS = 200f
 
         // Fill straight-line gaps between consecutive fixes when they're more
@@ -311,6 +359,27 @@ class LocationTrackingService : LifecycleService() {
                 action = ACTION_STOP
             }
             context.startService(intent)
+        }
+
+        /**
+         * Switch into the high-cadence (foreground) cadence. Safe to call even
+         * if the service isn't running yet — onStartCommand will swap mode and
+         * begin updates on the first fix.
+         */
+        fun enterForeground(context: Context) {
+            if (!TrackingPreferences(context).trackingEnabled) return
+            val intent = Intent(context, LocationTrackingService::class.java).apply {
+                action = ACTION_FOREGROUND
+            }
+            ContextCompat.startForegroundService(context, intent)
+        }
+
+        fun exitForeground(context: Context) {
+            if (!TrackingPreferences(context).trackingEnabled) return
+            val intent = Intent(context, LocationTrackingService::class.java).apply {
+                action = ACTION_BACKGROUND
+            }
+            ContextCompat.startForegroundService(context, intent)
         }
     }
 }

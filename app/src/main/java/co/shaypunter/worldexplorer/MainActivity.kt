@@ -99,6 +99,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Visible to the user → switch the tracking service to the
+        // high-cadence cadence so discs appear almost in real time as we move.
+        LocationTrackingService.enterForeground(this)
+    }
+
+    override fun onStop() {
+        // No longer visible → fall back to the battery-friendly cadence.
+        LocationTrackingService.exitForeground(this)
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
         binding.mapView.onResume()
