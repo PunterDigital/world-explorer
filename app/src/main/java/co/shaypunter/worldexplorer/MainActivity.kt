@@ -196,7 +196,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 launch {
                     viewModel.percentExplored.collectLatest { pct ->
-                        val formatted = String.format(Locale.US, "%06.3f%%", pct)
+                        val formatted = String.format(Locale.US, "%08.5f%%", pct)
                         binding.statsText.text =
                             getString(R.string.stats_percent, formatted)
                     }

@@ -41,7 +41,7 @@
             android:text="@string/stats_initial"
             android:textColor="@color/on_chip"
             android:textSize="13sp"
-            tools:text="00.045% explored" />
+            tools:text="00.04532% explored" />
     </LinearLayout>
 
     <com.google.android.material.floatingactionbutton.FloatingActionButton
