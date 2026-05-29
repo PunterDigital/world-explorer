@@ -6,10 +6,12 @@ import androidx.lifecycle.viewModelScope
 import co.shaypunter.worldexplorer.data.AppDatabase
 import co.shaypunter.worldexplorer.data.ExploredPoint
 import co.shaypunter.worldexplorer.data.ExploredRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -46,6 +48,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = 0.0
         )
+
+    /**
+     * Fire-and-forget cleanup pass that flattens GPS-noise bumps in the
+     * recorded trail. Re-runs idempotently — once a stretch is straight,
+     * subsequent passes change nothing.
+     */
+    fun smoothTrailOnce() {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.smoothTrail()
+        }
+    }
 
     companion object {
         // Earth's land surface area, ~148,940,000 km² (excludes oceans and seas).

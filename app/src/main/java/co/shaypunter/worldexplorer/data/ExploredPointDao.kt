@@ -3,6 +3,7 @@ package co.shaypunter.worldexplorer.data
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -30,6 +31,9 @@ interface ExploredPointDao {
 
     @Insert
     suspend fun insert(point: ExploredPoint): Long
+
+    @Update
+    suspend fun updateAll(points: List<ExploredPoint>)
 
     @Query("SELECT COUNT(*) FROM explored_points")
     fun observeCount(): Flow<Int>
