@@ -125,6 +125,6 @@ class FogOverlay : Overlay() {
     }
 
     companion object {
-        private const val FOG_ALPHA = 250
+        private const val FOG_ALPHA = 242
     }
 }
