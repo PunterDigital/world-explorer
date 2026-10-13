@@ -16,14 +16,16 @@ android {
         versionName = "0.1.1"
 
         vectorDrawables.useSupportLibrary = true
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
         // Use a checked-in debug keystore so every build (local, CI, anywhere)
         // signs with the same key. Without this, each CI run generates a fresh
         // keystore in ANDROID_USER_HOME and Android rejects updates with
-        // INSTALL_FAILED_UPDATE_INCOMPATIBLE. Debug-only, never used for
-        // release artefacts.
+        // INSTALL_FAILED_UPDATE_INCOMPATIBLE. Release APKs on GitHub are signed
+        // with it too, so they install over existing debug builds without
+        // wiping the explored-points database. The key is public; see README.
         getByName("debug") {
             storeFile = file("debug.keystore")
             storePassword = "android"
@@ -40,6 +42,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("debug")
         }
         debug {
             isMinifyEnabled = false
@@ -58,6 +61,22 @@ android {
 
     buildFeatures {
         viewBinding = true
+    }
+
+    testOptions {
+        // `./gradlew pixel6Api34DebugAndroidTest` boots a throwaway emulator,
+        // runs the instrumented tests and tears it down. Never run
+        // connectedAndroidTest against a real phone: AGP uninstalls the app
+        // afterwards, which deletes its explored-points database.
+        managedDevices {
+            localDevices {
+                create("pixel6Api34") {
+                    device = "Pixel 6"
+                    apiLevel = 34
+                    systemImageSource = "google"
+                }
+            }
+        }
     }
 
     packaging {
@@ -90,4 +109,12 @@ dependencies {
     ksp("androidx.room:room-compiler:2.6.1")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // Instrumented E2E tests (run on an emulator; see CLAUDE.md)
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit-ktx:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    androidTestImplementation("androidx.room:room-testing:2.6.1")
+    androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 }
