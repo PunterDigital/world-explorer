@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import co.shaypunter.worldexplorer.data.AppDatabase
 import co.shaypunter.worldexplorer.data.ExploredPoint
 import co.shaypunter.worldexplorer.data.ExploredRepository
+import co.shaypunter.worldexplorer.data.TrackingPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -50,13 +51,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
 
     /**
-     * Fire-and-forget cleanup pass that flattens GPS-noise bumps in the
-     * recorded trail. Re-runs idempotently — once a stretch is straight,
-     * subsequent passes change nothing.
+     * Fire-and-forget cleanup pass that flattens GPS-noise bumps in points
+     * recorded since the last pass. Each point is smoothed at most once.
      */
     fun smoothTrailOnce() {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.smoothTrail()
+            val prefs = TrackingPreferences(getApplication())
+            val watermark = prefs.smoothedUpToId
+            prefs.smoothedUpToId = if (watermark == null) {
+                // First run of the watermarked smoother. Older builds re-smoothed
+                // the whole history on every launch, so treat what's there as
+                // done rather than pulling its curves straighter again.
+                repository.maxId()
+            } else {
+                repository.smoothTrail(watermark)
+            }
         }
     }
 

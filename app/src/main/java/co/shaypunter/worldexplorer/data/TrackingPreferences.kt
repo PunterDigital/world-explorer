@@ -19,6 +19,16 @@ class TrackingPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_TRACKING_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_TRACKING_ENABLED, value) }
 
+    /**
+     * Trail-smoothing watermark: points with an id up to this have been
+     * smoothed (see TrailSmoother). Null until the first smoothing run.
+     */
+    var smoothedUpToId: Long?
+        get() = if (prefs.contains(KEY_SMOOTHED_UP_TO)) prefs.getLong(KEY_SMOOTHED_UP_TO, 0L) else null
+        set(value) = prefs.edit {
+            if (value == null) remove(KEY_SMOOTHED_UP_TO) else putLong(KEY_SMOOTHED_UP_TO, value)
+        }
+
     var backgroundLocationPrompted: Boolean
         get() = prefs.getBoolean(KEY_BG_PROMPTED, false)
         set(value) = prefs.edit { putBoolean(KEY_BG_PROMPTED, value) }
@@ -66,6 +76,7 @@ class TrackingPreferences(context: Context) {
     companion object {
         private const val PREFS_NAME = "world_explorer_prefs"
         private const val KEY_TRACKING_ENABLED = "tracking_enabled"
+        private const val KEY_SMOOTHED_UP_TO = "smoothed_up_to_id"
         private const val KEY_BG_PROMPTED = "background_location_prompted"
         private const val KEY_BATT_OPT_PROMPTED = "battery_opt_prompted"
         private const val KEY_LAST_LAT = "last_fix_lat_bits"
