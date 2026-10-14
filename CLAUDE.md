@@ -49,6 +49,11 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
 ## Quirks
 
 - `stats_initial` must stay `formatted="false"` (literal `%` trips lint).
+- Tracking auto-starts on launch unless the user stopped it (`pausedByUser`).
+  Stop paths: `LocationTrackingService.stop()` (in-app, writes prefs
+  synchronously) and `ACTION_STOP_FROM_NOTIFICATION` (the service writes them).
+  Don't make the service write prefs on plain `ACTION_STOP`: a quick
+  stop-then-start would undo the start.
 - `smoothTrail()` runs on every app open and rewrites stored points.
 - Room DB is version 1 with `exportSchema = false` and no migrations: any
   entity change needs a migration or the app crashes on upgrade.
