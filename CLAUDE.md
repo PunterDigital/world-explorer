@@ -57,6 +57,14 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   synchronously) and `ACTION_STOP_FROM_NOTIFICATION` (the service writes them).
   Don't make the service write prefs on plain `ACTION_STOP`: a quick
   stop-then-start would undo the start.
+- Boot resume (`BootReceiver`) needs background location ("Allow all the
+  time") on Android 10+: Android 14 throws a SecurityException for a location
+  foreground service started from the background without it (reproduced on
+  API 34, card #2424). Without it the receiver skips and the app resumes
+  tracking when opened. Service starts go through `startSafely` and
+  `startInForeground` returns false instead of throwing; keep it that way.
+  When reproducing reboot behaviour on an emulator, wait ~30 s and `adb shell
+  sync` after `pm grant` before `adb reboot`, or the grants are lost.
 - Trail smoothing (`data/TrailSmoother`) runs on every app open but only
   touches points after the `smoothedUpToId` watermark in prefs, and never
   across trip boundaries (> 5 min gap). Projection isn't idempotent on curves,

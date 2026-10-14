@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.util.Log
 import kotlin.math.ceil
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -135,7 +136,7 @@ class LocationTrackingService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        startInForeground()
+        val inForeground = startInForeground()
 
         when (intent?.action) {
             ACTION_STOP, ACTION_STOP_FROM_NOTIFICATION -> {
@@ -152,6 +153,18 @@ class LocationTrackingService : LifecycleService() {
                 stopSelf()
                 return START_NOT_STICKY
             }
+        }
+
+        if (!inForeground) {
+            // Android won't let us run as a location service right now (see
+            // startInForeground). Stay enabled, so tracking resumes the next
+            // time the app is opened, rather than retrying from the background.
+            stopUpdates()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        when (intent?.action) {
             ACTION_FOREGROUND -> {
                 foregroundActive = true
                 startUpdates()
@@ -255,7 +268,13 @@ class LocationTrackingService : LifecycleService() {
         wakeLock = null
     }
 
-    private fun startInForeground() {
+    /**
+     * Promotes the service to a location foreground service. Returns false
+     * instead of crashing when Android refuses: on Android 14+ a location
+     * service started from the background (sticky restart, boot) needs
+     * background location, and Android 12+ can refuse foreground starts.
+     */
+    private fun startInForeground(): Boolean {
         val openAppIntent = PendingIntent.getActivity(
             this,
             0,
@@ -285,14 +304,24 @@ class LocationTrackingService : LifecycleService() {
                 .addAction(0, getString(R.string.tracking_stop), stopIntent)
                 .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            true
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Not allowed to start location tracking in the foreground", e)
+            false
+        } catch (e: IllegalStateException) {
+            // ForegroundServiceStartNotAllowedException (Android 12+)
+            Log.w(TAG, "Not allowed to start location tracking in the foreground", e)
+            false
         }
     }
 
@@ -303,6 +332,7 @@ class LocationTrackingService : LifecycleService() {
         const val ACTION_FOREGROUND = "co.shaypunter.worldexplorer.action.FOREGROUND"
         const val ACTION_BACKGROUND = "co.shaypunter.worldexplorer.action.BACKGROUND"
         private const val NOTIFICATION_ID = 4242
+        private const val TAG = "LocationTracking"
 
         // Background (screen off or activity gone) cadence — endurance over
         // precision.
@@ -363,7 +393,7 @@ class LocationTrackingService : LifecycleService() {
                 pausedByUser = false
             }
             val intent = Intent(context, LocationTrackingService::class.java)
-            ContextCompat.startForegroundService(context, intent)
+            startSafely(context, intent, foreground = true)
         }
 
         fun stop(context: Context) {
@@ -373,7 +403,27 @@ class LocationTrackingService : LifecycleService() {
             val intent = Intent(context, LocationTrackingService::class.java).apply {
                 action = ACTION_STOP
             }
-            context.startService(intent)
+            startSafely(context, intent, foreground = false)
+        }
+
+        /**
+         * Starts the service without ever crashing the caller. Android 12+
+         * refuses foreground-service starts from the background (onStop can
+         * land there, as can the boot receiver), and Android 8+ refuses plain
+         * service starts from the background. Logs instead.
+         */
+        private fun startSafely(context: Context, intent: Intent, foreground: Boolean) {
+            try {
+                if (foreground) {
+                    ContextCompat.startForegroundService(context, intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: IllegalStateException) {
+                Log.w(TAG, "Could not start the tracking service (${intent.action})", e)
+            } catch (e: SecurityException) {
+                Log.w(TAG, "Could not start the tracking service (${intent.action})", e)
+            }
         }
 
         private fun markStopped(prefs: TrackingPreferences) {
@@ -392,7 +442,7 @@ class LocationTrackingService : LifecycleService() {
             val intent = Intent(context, LocationTrackingService::class.java).apply {
                 action = ACTION_FOREGROUND
             }
-            ContextCompat.startForegroundService(context, intent)
+            startSafely(context, intent, foreground = true)
         }
 
         fun exitForeground(context: Context) {
@@ -400,7 +450,7 @@ class LocationTrackingService : LifecycleService() {
             val intent = Intent(context, LocationTrackingService::class.java).apply {
                 action = ACTION_BACKGROUND
             }
-            ContextCompat.startForegroundService(context, intent)
+            startSafely(context, intent, foreground = true)
         }
     }
 }
