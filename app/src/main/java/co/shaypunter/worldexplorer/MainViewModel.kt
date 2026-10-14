@@ -4,12 +4,14 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import co.shaypunter.worldexplorer.data.AppDatabase
+import co.shaypunter.worldexplorer.data.ExploredArea
 import co.shaypunter.worldexplorer.data.ExploredPoint
 import co.shaypunter.worldexplorer.data.ExploredRepository
 import co.shaypunter.worldexplorer.data.TrackingPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -27,11 +29,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = emptyList()
         )
 
+    private val exploredArea = ExploredArea()
+
     /**
-     * Naive sum of (π·r²) across all explored points, normalised against
-     * Earth's land surface area (oceans excluded). Because dedup keeps points
-     * at least half a radius apart, neighbouring circles can overlap and this
-     * slightly overcounts — but for a planet-sized denominator that's fine.
+     * Area of the union of all explored circles (see [ExploredArea]), as a
+     * share of Earth's land surface area (oceans excluded). New points are
+     * added incrementally, off the main thread.
      *
      * Note: points recorded over water (ferries, beaches, etc.) still count
      * toward the numerator; correctly masking the numerator would need an
@@ -39,11 +42,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     val percentExplored: StateFlow<Double> = points
         .map { pts ->
-            val coveredMeters = pts.sumOf { p ->
-                Math.PI * p.radiusMeters.toDouble() * p.radiusMeters.toDouble()
-            }
-            (coveredMeters / EARTH_LAND_AREA_M2 * 100.0).coerceIn(0.0, 100.0)
+            (exploredArea.update(pts) / EARTH_LAND_AREA_M2 * 100.0).coerceIn(0.0, 100.0)
         }
+        .flowOn(Dispatchers.Default)
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
