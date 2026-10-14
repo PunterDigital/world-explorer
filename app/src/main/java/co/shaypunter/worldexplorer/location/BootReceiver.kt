@@ -5,6 +5,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
+import android.util.Log
 import androidx.core.content.ContextCompat
 import co.shaypunter.worldexplorer.data.TrackingPreferences
 
@@ -25,14 +27,37 @@ class BootReceiver : BroadcastReceiver() {
         val prefs = TrackingPreferences(context)
         if (!prefs.trackingEnabled) return
 
-        val hasFine = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        val hasCoarse = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!hasFine && !hasCoarse) return
+        val hasForeground = isGranted(context, Manifest.permission.ACCESS_FINE_LOCATION) ||
+                isGranted(context, Manifest.permission.ACCESS_COARSE_LOCATION)
+        val hasBackground = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                isGranted(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        if (!shouldResumeAfterBoot(Build.VERSION.SDK_INT, hasForeground, hasBackground)) {
+            // trackingEnabled stays on, so tracking resumes the next time the
+            // app is opened.
+            Log.i(TAG, "Not resuming tracking after boot: needs \"Allow all the time\" location")
+            return
+        }
 
         LocationTrackingService.start(context)
     }
+
+    private fun isGranted(context: Context, permission: String) =
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+    private companion object {
+        const val TAG = "BootReceiver"
+    }
 }
+
+/**
+ * Whether tracking may resume at boot. From Android 10 the service is started
+ * from the background here, so it only gets location with background location
+ * ("Allow all the time"). Without it Android 14+ refuses the location
+ * foreground service outright (SecurityException, and the app crashed at boot).
+ */
+internal fun shouldResumeAfterBoot(
+    sdkInt: Int,
+    hasForegroundLocation: Boolean,
+    hasBackgroundLocation: Boolean
+): Boolean = hasForegroundLocation &&
+        (sdkInt < Build.VERSION_CODES.Q || hasBackgroundLocation)

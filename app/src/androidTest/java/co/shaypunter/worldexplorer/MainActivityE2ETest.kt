@@ -1,9 +1,11 @@
 package co.shaypunter.worldexplorer
 
 import android.Manifest
+import android.app.ActivityManager
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -37,6 +39,7 @@ import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
@@ -156,6 +159,31 @@ class MainActivityE2ETest {
     }
 
     @Test
+    fun bootWithoutBackgroundLocationWaitsForTheAppToOpen() {
+        // Android 14 crashed here: a location foreground service started at
+        // boot without "Allow all the time" throws a SecurityException.
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+        assertTrue(
+            "the test grants only while-in-use location",
+            context.checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) !=
+                PackageManager.PERMISSION_GRANTED
+        )
+        waitUntil("an earlier test's service to stop") { !isTrackingServiceRunning() }
+        TrackingPreferences(context).trackingEnabled = true
+
+        BootReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
+        Thread.sleep(2_000)
+        assertFalse(isTrackingServiceRunning())
+        assertTrue(TrackingPreferences(context).trackingEnabled)
+
+        // Tracking picks up again the next time the app is opened.
+        ActivityScenario.launch(MainActivity::class.java).use {
+            waitUntil("tracking to resume") { isTrackingServiceRunning() }
+            onView(withId(R.id.trackingDot)).check(matches(isDisplayed()))
+        }
+    }
+
+    @Test
     fun percentExploredCountsOverlappingCirclesOnce() {
         // Tracking stays off so no extra fix changes the number.
         TrackingPreferences(context).pausedByUser = true
@@ -198,6 +226,12 @@ class MainActivityE2ETest {
         time = System.currentTimeMillis()
         elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
     }
+
+    @Suppress("DEPRECATION") // still returns the caller's own services
+    private fun isTrackingServiceRunning() =
+        context.getSystemService(ActivityManager::class.java)
+            .getRunningServices(Int.MAX_VALUE)
+            .any { it.service.className == LocationTrackingService::class.java.name }
 
     private fun shell(cmd: String) {
         // Drain the output so the command has finished before we carry on.
