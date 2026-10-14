@@ -138,8 +138,17 @@ class LocationTrackingService : LifecycleService() {
         startInForeground()
 
         when (intent?.action) {
-            ACTION_STOP -> {
+            ACTION_STOP, ACTION_STOP_FROM_NOTIFICATION -> {
                 stopUpdates()
+                // The notification's Stop action comes straight here without
+                // going through stop(), so record the stop now, or the app
+                // and BootReceiver would see tracking as on and restart it.
+                // stop() records it itself, synchronously: doing it again
+                // here would race a quick stop-then-start and undo the start.
+                if (intent.action == ACTION_STOP_FROM_NOTIFICATION) markStopped(prefs)
+                lastFixLat = null
+                lastFixLon = null
+                lastFixTimestamp = 0L
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -257,7 +266,9 @@ class LocationTrackingService : LifecycleService() {
         val stopIntent = PendingIntent.getService(
             this,
             1,
-            Intent(this, LocationTrackingService::class.java).apply { action = ACTION_STOP },
+            Intent(this, LocationTrackingService::class.java).apply {
+                action = ACTION_STOP_FROM_NOTIFICATION
+            },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
@@ -287,6 +298,8 @@ class LocationTrackingService : LifecycleService() {
 
     companion object {
         const val ACTION_STOP = "co.shaypunter.worldexplorer.action.STOP_TRACKING"
+        const val ACTION_STOP_FROM_NOTIFICATION =
+            "co.shaypunter.worldexplorer.action.STOP_TRACKING_FROM_NOTIFICATION"
         const val ACTION_FOREGROUND = "co.shaypunter.worldexplorer.action.FOREGROUND"
         const val ACTION_BACKGROUND = "co.shaypunter.worldexplorer.action.BACKGROUND"
         private const val NOTIFICATION_ID = 4242
@@ -345,20 +358,28 @@ class LocationTrackingService : LifecycleService() {
 
         fun start(context: Context) {
             ensureChannel(context)
-            TrackingPreferences(context).trackingEnabled = true
+            TrackingPreferences(context).apply {
+                trackingEnabled = true
+                pausedByUser = false
+            }
             val intent = Intent(context, LocationTrackingService::class.java)
             ContextCompat.startForegroundService(context, intent)
         }
 
         fun stop(context: Context) {
-            TrackingPreferences(context).apply {
-                trackingEnabled = false
-                clearLastFix()
-            }
+            // Recorded synchronously so the UI can read the new state straight
+            // away and a start() right after this can't be undone by the service.
+            markStopped(TrackingPreferences(context))
             val intent = Intent(context, LocationTrackingService::class.java).apply {
                 action = ACTION_STOP
             }
             context.startService(intent)
+        }
+
+        private fun markStopped(prefs: TrackingPreferences) {
+            prefs.trackingEnabled = false
+            prefs.pausedByUser = true
+            prefs.clearLastFix()
         }
 
         /**

@@ -51,6 +51,11 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
 ## Quirks
 
 - `stats_initial` must stay `formatted="false"` (literal `%` trips lint).
+- Tracking auto-starts on launch unless the user stopped it (`pausedByUser`).
+  Stop paths: `LocationTrackingService.stop()` (in-app, writes prefs
+  synchronously) and `ACTION_STOP_FROM_NOTIFICATION` (the service writes them).
+  Don't make the service write prefs on plain `ACTION_STOP`: a quick
+  stop-then-start would undo the start.
 - Trail smoothing (`data/TrailSmoother`) runs on every app open but only
   touches points after the `smoothedUpToId` watermark in prefs, and never
   across trip boundaries (> 5 min gap). Projection isn't idempotent on curves,

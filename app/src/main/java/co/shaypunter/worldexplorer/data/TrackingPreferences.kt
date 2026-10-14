@@ -1,6 +1,7 @@
 package co.shaypunter.worldexplorer.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.core.content.edit
 
 /**
@@ -18,6 +19,28 @@ class TrackingPreferences(context: Context) {
     var trackingEnabled: Boolean
         get() = prefs.getBoolean(KEY_TRACKING_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_TRACKING_ENABLED, value) }
+
+    /**
+     * True once the user has explicitly stopped tracking (in-app button or the
+     * notification's Stop action). The app auto-starts tracking on launch only
+     * while this is false, so a deliberate stop survives reopening the app.
+     */
+    var pausedByUser: Boolean
+        get() = prefs.getBoolean(KEY_PAUSED_BY_USER, false)
+        set(value) = prefs.edit { putBoolean(KEY_PAUSED_BY_USER, value) }
+
+    /**
+     * Calls [onChange] on the main thread whenever [trackingEnabled] changes,
+     * including from the service. Returns a function that unregisters it; keep
+     * a reference to it, since SharedPreferences only holds listeners weakly.
+     */
+    fun observeTrackingEnabled(onChange: (Boolean) -> Unit): () -> Unit {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == KEY_TRACKING_ENABLED) onChange(trackingEnabled)
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        return { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
 
     /**
      * Trail-smoothing watermark: points with an id up to this have been
@@ -76,6 +99,7 @@ class TrackingPreferences(context: Context) {
     companion object {
         private const val PREFS_NAME = "world_explorer_prefs"
         private const val KEY_TRACKING_ENABLED = "tracking_enabled"
+        private const val KEY_PAUSED_BY_USER = "paused_by_user"
         private const val KEY_SMOOTHED_UP_TO = "smoothed_up_to_id"
         private const val KEY_BG_PROMPTED = "background_location_prompted"
         private const val KEY_BATT_OPT_PROMPTED = "battery_opt_prompted"

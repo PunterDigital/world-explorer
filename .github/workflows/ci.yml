@@ -80,8 +80,18 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          # emulator-runner runs each script line on its own, so the failure
+          # diagnostics (focused window, crashes/ANRs, a screenshot in the
+          # uploaded reports) have to stay on one line.
+          # A cold-booted emulator's launcher sometimes ANRs and its dialog
+          # steals focus from the app under test (Espresso then fails with
+          # RootViewWithoutFocusException). Hide error dialogs and restart the
+          # launcher to clear any that is already up.
           script: |
-            ./gradlew connectedDebugAndroidTest
+            adb shell settings put global hide_error_dialogs 1
+            adb shell am force-stop com.google.android.apps.nexuslauncher
+            adb shell input keyevent KEYCODE_HOME
+            ./gradlew connectedDebugAndroidTest || { mkdir -p app/build/reports/androidTests; adb shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'; adb logcat -d | grep -E 'FATAL|ANR in|AndroidRuntime|not responding' | tail -60; adb exec-out screencap -p > app/build/reports/androidTests/failure.png; exit 1; }
             bash scripts/smoke-apk.sh app/build/outputs/apk/release/app-release.apk
 
       - name: Upload test reports

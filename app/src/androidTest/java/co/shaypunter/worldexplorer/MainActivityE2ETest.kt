@@ -1,7 +1,9 @@
 package co.shaypunter.worldexplorer
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.location.Location
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -20,6 +22,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import co.shaypunter.worldexplorer.data.AppDatabase
 import co.shaypunter.worldexplorer.data.TrackingPreferences
+import co.shaypunter.worldexplorer.location.BootReceiver
 import co.shaypunter.worldexplorer.location.LocationTrackingService
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.tasks.Tasks
@@ -60,6 +63,7 @@ class MainActivityE2ETest {
         AppDatabase.get(context).clearAllTables()
         TrackingPreferences(context).apply {
             trackingEnabled = false
+            pausedByUser = false
             clearLastFix()
             backgroundLocationPrompted = true
             batteryOptPrompted = true
@@ -101,6 +105,48 @@ class MainActivityE2ETest {
             assertTrue(TrackingPreferences(context).trackingEnabled)
             onView(withId(R.id.trackingDot)).check(matches(isDisplayed()))
         }
+    }
+
+    @Test
+    fun notificationStopKeepsTrackingOff() {
+        ActivityScenario.launch(MainActivity::class.java).use {
+            waitUntil("tracking to start") { TrackingPreferences(context).trackingEnabled }
+            onView(withId(R.id.trackingDot)).check(matches(isDisplayed()))
+
+            // Tap Stop the way the user would: fire the action on the
+            // service's own notification.
+            val notifications = context.getSystemService(NotificationManager::class.java)
+            var stopAction: android.app.PendingIntent? = null
+            waitUntil("the tracking notification") {
+                stopAction = notifications.activeNotifications
+                    .firstOrNull { it.notification.channelId == WorldExplorerApp.TRACKING_CHANNEL_ID }
+                    ?.notification?.actions?.firstOrNull()?.actionIntent
+                stopAction != null
+            }
+            stopAction!!.send()
+
+            waitUntil("tracking to stop") { !TrackingPreferences(context).trackingEnabled }
+            assertTrue(TrackingPreferences(context).lastFix == null)
+            // The open activity follows the change without being reopened.
+            waitUntil("the tracking dot to hide") {
+                var hidden = false
+                it.onActivity { a -> hidden = !a.findViewById<android.view.View>(R.id.trackingDot).isShown }
+                hidden
+            }
+        }
+
+        // Reopening the app must not quietly start tracking again.
+        ActivityScenario.launch(MainActivity::class.java).use {
+            onView(withId(R.id.mapView)).check(matches(isDisplayed()))
+            Thread.sleep(2_000)
+            assertFalse(TrackingPreferences(context).trackingEnabled)
+            onView(withId(R.id.trackingDot))
+                .check(matches(withEffectiveVisibility(Visibility.GONE)))
+        }
+
+        // Nor must a reboot.
+        BootReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
+        assertFalse(TrackingPreferences(context).trackingEnabled)
     }
 
     private fun mockFix(lat: Double, lon: Double) = Location("fused").apply {
