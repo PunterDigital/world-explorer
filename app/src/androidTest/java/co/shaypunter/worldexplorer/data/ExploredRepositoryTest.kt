@@ -58,4 +58,24 @@ class ExploredRepositoryTest {
         // ~55 m north: outside a 20 m dedup box (the foreground setting).
         assertTrue(repository.recordIfNew(51.5005, -0.12, 200f, 2L, dedupRadiusMeters = 20.0))
     }
+
+    @Test
+    fun smoothTrailWritesBackOnceAndAdvancesTheWatermark() = runTest {
+        val dao = db.exploredPointDao()
+        // East every ~50 m with an ~8 m bump on the middle point, 1 s apart.
+        for (i in 0..6) {
+            val north = if (i == 3) 8.0 / 111_320.0 else 0.0
+            dao.insert(ExploredPoint(latitude = 51.5 + north, longitude = -0.12 + i * 0.00072,
+                radiusMeters = 200f, timestamp = i * 1_000L))
+        }
+        assertEquals(7L, repository.maxId())
+
+        val watermark = repository.smoothTrail(smoothedUpToId = 0)
+        assertEquals(5L, watermark)
+        assertEquals(51.5, dao.getAll()[3].latitude, 1e-6)
+
+        val before = dao.getAll()
+        assertEquals(watermark, repository.smoothTrail(watermark))
+        assertEquals(before, dao.getAll())
+    }
 }

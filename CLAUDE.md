@@ -24,6 +24,8 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
 
 ## Testing
 
+- JVM unit tests in `app/src/test` (pure logic such as `TrailSmoother`; no
+  Android APIs there, they're stubs on the JVM).
 - Instrumented tests in `app/src/androidTest` (Espresso + in-memory Room).
   `MainActivityE2ETest` grants location, launches, feeds a mock fused-location
   fix and checks it lands in the DB, then toggles tracking.
@@ -54,6 +56,9 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   synchronously) and `ACTION_STOP_FROM_NOTIFICATION` (the service writes them).
   Don't make the service write prefs on plain `ACTION_STOP`: a quick
   stop-then-start would undo the start.
-- `smoothTrail()` runs on every app open and rewrites stored points.
+- Trail smoothing (`data/TrailSmoother`) runs on every app open but only
+  touches points after the `smoothedUpToId` watermark in prefs, and never
+  across trip boundaries (> 5 min gap). Projection isn't idempotent on curves,
+  so never re-smooth old points.
 - Room DB is version 1 with `exportSchema = false` and no migrations: any
   entity change needs a migration or the app crashes on upgrade.

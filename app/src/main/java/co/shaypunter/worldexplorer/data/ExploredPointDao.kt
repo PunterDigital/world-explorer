@@ -29,6 +29,9 @@ interface ExploredPointDao {
         maxLon: Double
     ): List<ExploredPoint>
 
+    @Query("SELECT MAX(id) FROM explored_points")
+    suspend fun maxId(): Long?
+
     @Insert
     suspend fun insert(point: ExploredPoint): Long
 
