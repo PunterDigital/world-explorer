@@ -45,7 +45,8 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   release workflow fails if the tag doesn't match `versionName`.
 - Release APKs are signed with the committed debug keystore on purpose, so they
   update over Shay's existing install. Changing the signing key forces an
-  uninstall (data loss): needs Shay's OK.
+  uninstall (data loss): needs Shay's OK. Shay confirmed on 2026-10-14 (card
+  #2429) that the public debug key is fine for this personal app: don't raise it again.
 - Asset name: `WorldExplorer-vX.Y.Z.apk` (registry pattern `\.apk$`).
 
 ## Quirks
@@ -62,3 +63,9 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   so never re-smooth old points.
 - Room DB is version 1 with `exportSchema = false` and no migrations: any
   entity change needs a migration or the app crashes on upgrade.
+- "% explored" is the area of the *union* of the circles (`data/ExploredArea`):
+  each circle is rasterised onto ~50 m equal-area cells kept in a primitive
+  long hash set, and new points are added incrementally. Don't go back to
+  summing π·r² per point (points sit 20–150 m apart, so that overcounted
+  several-fold). The display has only 5 decimals, so E2E checks need a big
+  seeded area to see a difference.

@@ -8,33 +8,39 @@ import android.location.Location
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.widget.TextView
+import androidx.room.withTransaction
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.assertion.ViewAssertions.matches
+import androidx.test.espresso.matcher.ViewMatchers.Visibility
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.withEffectiveVisibility
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withSubstring
-import androidx.test.espresso.matcher.ViewMatchers.Visibility
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import co.shaypunter.worldexplorer.data.AppDatabase
+import co.shaypunter.worldexplorer.data.ExploredArea
+import co.shaypunter.worldexplorer.data.ExploredPoint
 import co.shaypunter.worldexplorer.data.TrackingPreferences
 import co.shaypunter.worldexplorer.location.BootReceiver
 import co.shaypunter.worldexplorer.location.LocationTrackingService
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.tasks.Tasks
+import java.util.Locale
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.util.concurrent.TimeUnit
 
 /**
  * Smoke test of the core flow: launch with location granted, tracking starts
@@ -148,6 +154,42 @@ class MainActivityE2ETest {
         BootReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
         assertFalse(TrackingPreferences(context).trackingEnabled)
     }
+
+    @Test
+    fun percentExploredCountsOverlappingCirclesOnce() {
+        // Tracking stays off so no extra fix changes the number.
+        TrackingPreferences(context).pausedByUser = true
+
+        // A 30 x 30 km block of points 300 m apart: their 200 m circles overlap.
+        val points = (0 until 100).flatMap { row ->
+            (0 until 100).map { col ->
+                ExploredPoint(
+                    latitude = 45.0 + row * 300.0 / 111_320.0,
+                    longitude = 7.0 + col * 300.0 / (111_320.0 * Math.cos(Math.toRadians(45.0))),
+                    radiusMeters = LocationTrackingService.UNLOCK_RADIUS_METERS,
+                    timestamp = 0L
+                )
+            }
+        }
+        val db = AppDatabase.get(context)
+        runBlocking { db.withTransaction { points.forEach { db.exploredPointDao().insert(it) } } }
+
+        val union = ExploredArea().update(runBlocking { db.exploredPointDao().getAll() })
+        val naiveSum = points.size * Math.PI * 200.0 * 200.0
+        val expected = formatPercent(union)
+        assertNotEquals("test area too small to tell the two apart", formatPercent(naiveSum), expected)
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            var shown = ""
+            waitUntil("the stats to show the union area", timeoutMs = 30_000) {
+                scenario.onActivity { shown = it.findViewById<TextView>(R.id.statsText).text.toString() }
+                shown.startsWith(expected)
+            }
+        }
+    }
+
+    private fun formatPercent(areaM2: Double) =
+        String.format(Locale.US, "%08.5f%%", areaM2 / 148_940_000_000_000.0 * 100.0)
 
     private fun mockFix(lat: Double, lon: Double) = Location("fused").apply {
         latitude = lat
