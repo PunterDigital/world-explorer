@@ -102,14 +102,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Unregisters the tracking-state listener while the activity is stopped. */
+    private var stopObservingTracking: (() -> Unit)? = null
+
     override fun onStart() {
         super.onStart()
+        // Tracking can be stopped from the notification while we're in the
+        // background (or behind the shade), so refresh and keep following it.
+        updateTrackingButton()
+        stopObservingTracking = prefs.observeTrackingEnabled { updateTrackingButton() }
         // Visible to the user → switch the tracking service to the
         // high-cadence cadence so discs appear almost in real time as we move.
         LocationTrackingService.enterForeground(this)
     }
 
     override fun onStop() {
+        stopObservingTracking?.invoke()
+        stopObservingTracking = null
         // No longer visible → fall back to the battery-friendly cadence.
         LocationTrackingService.exitForeground(this)
         super.onStop()
@@ -207,6 +216,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun toggleTracking() {
         if (!hasLocationPermission()) {
+            // The user asked for tracking, so start it once permission lands.
+            prefs.pausedByUser = false
             locationPermissionLauncher.launch(
                 arrayOf(
                     Manifest.permission.ACCESS_FINE_LOCATION,
@@ -234,7 +245,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onLocationPermissionGranted() {
-        if (!isTracking) {
+        // Auto-start, unless the user deliberately stopped tracking.
+        if (!isTracking && !prefs.pausedByUser) {
             LocationTrackingService.start(this)
             updateTrackingButton()
         }
