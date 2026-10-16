@@ -13,6 +13,9 @@
     <string name="stop_tracking">Stop tracking</string>
     <string name="center_on_me">Centre on my location</string>
 
+    <string name="osm_attribution">© OpenStreetMap contributors</string>
+    <string name="osm_copyright_url" translatable="false">https://www.openstreetmap.org/copyright</string>
+
     <string name="no_location_yet">No location fix yet — give it a moment.</string>
 
     <string name="permission_needed_title">Location needed</string>

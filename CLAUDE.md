@@ -69,6 +69,10 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   touches points after the `smoothedUpToId` watermark in prefs, and never
   across trip boundaries (> 5 min gap). Projection isn't idempotent on curves,
   so never re-smooth old points.
+- First-launch prompts run one at a time (location → notifications →
+  background location → battery) through `MainActivity.nextPrompt` /
+  `continuePrompts()`. Android drops a permission request launched while
+  another is showing, so never launch two together.
 - Room DB is version 1 with `exportSchema = false` and no migrations: any
   entity change needs a migration or the app crashes on upgrade.
 - "% explored" is the area of the *union* of the circles (`data/ExploredArea`):

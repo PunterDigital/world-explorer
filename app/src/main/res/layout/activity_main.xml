@@ -44,6 +44,21 @@
             tools:text="00.04532% explored" />
     </LinearLayout>
 
+    <!-- Required by the OSM tile usage policy and ODbL. A view, not a map
+         overlay, so it sits above the fog and reads over any tile. -->
+    <TextView
+        android:id="@+id/osmAttribution"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="8dp"
+        android:background="@drawable/bg_chip"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="2dp"
+        android:text="@string/osm_attribution"
+        android:textColor="@color/on_chip"
+        android:textSize="11sp" />
+
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/btnTracking"
         android:layout_width="wrap_content"

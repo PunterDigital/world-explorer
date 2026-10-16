@@ -90,6 +90,10 @@ class MainActivityE2ETest {
         ActivityScenario.launch(MainActivity::class.java).use {
             onView(withId(R.id.mapView)).check(matches(isDisplayed()))
             onView(withId(R.id.statsText)).check(matches(withSubstring("explored")))
+            // OSM attribution (tile usage policy / ODbL) stays on screen.
+            onView(withId(R.id.osmAttribution))
+                .check(matches(isDisplayed()))
+                .check(matches(withSubstring("OpenStreetMap contributors")))
 
             // Location is granted, so tracking starts automatically.
             waitUntil("tracking to start") { TrackingPreferences(context).trackingEnabled }
