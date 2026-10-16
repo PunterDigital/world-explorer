@@ -2,6 +2,12 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
+    id("androidx.room")
+}
+
+// Exported schemas are committed: MigrationTest builds old versions from them.
+room {
+    schemaDirectory("$projectDir/schemas")
 }
 
 android {
@@ -78,6 +84,11 @@ android {
                 }
             }
         }
+    }
+
+    sourceSets {
+        // MigrationTestHelper reads the exported schemas from the test APK assets.
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 
     packaging {

@@ -8,7 +8,7 @@ import androidx.room.RoomDatabase
 @Database(
     entities = [ExploredPoint::class],
     version = 1,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
 
@@ -23,7 +23,10 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "world-explorer.db"
-                ).build().also { instance = it }
+                )
+                    .addMigrations(*ALL_MIGRATIONS)
+                    .build()
+                    .also { instance = it }
             }
         }
     }
