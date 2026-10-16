@@ -9,13 +9,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.location.Location
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
-import kotlin.math.ceil
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
@@ -88,26 +86,15 @@ class LocationTrackingService : LifecycleService() {
 
             lifecycleScope.launch(Dispatchers.IO) {
                 if (prevLat != null && prevLon != null) {
-                    val results = FloatArray(1)
-                    Location.distanceBetween(prevLat, prevLon, curLat, curLon, results)
-                    val gapMeters = results[0]
-                    val timeGapMs = timestamp - prevTs
-
-                    if (gapMeters in INTERPOLATION_THRESHOLD_M..MAX_INTERPOLATION_DISTANCE_M &&
-                        timeGapMs in 0..MAX_INTERPOLATION_TIME_MS) {
-                        val steps = ceil(gapMeters / INTERPOLATION_STEP_M).toInt()
-                        for (i in 1 until steps) {
-                            val t = i.toDouble() / steps
-                            val lat = prevLat + (curLat - prevLat) * t
-                            val lon = prevLon + (curLon - prevLon) * t
-                            repository.recordIfNew(
-                                latitude = lat,
-                                longitude = lon,
-                                radiusMeters = UNLOCK_RADIUS_METERS,
-                                timestamp = timestamp,
-                                dedupRadiusMeters = dedup.toDouble()
-                            )
-                        }
+                    val gap = GapFiller.between(prevLat, prevLon, prevTs, curLat, curLon, timestamp)
+                    for (p in gap) {
+                        repository.recordIfNew(
+                            latitude = p.latitude,
+                            longitude = p.longitude,
+                            radiusMeters = UNLOCK_RADIUS_METERS,
+                            timestamp = timestamp,
+                            dedupRadiusMeters = dedup.toDouble()
+                        )
                     }
                 }
 
@@ -352,23 +339,6 @@ class LocationTrackingService : LifecycleService() {
         private const val FG_DEDUP_METERS = 20f
 
         const val UNLOCK_RADIUS_METERS = 200f
-
-        // Fill straight-line gaps between consecutive fixes when they're more
-        // than this far apart. 1.5× radius means circles wouldn't visually
-        // touch without interpolation.
-        private const val INTERPOLATION_THRESHOLD_M = 300f
-        // Spacing between interpolated points. 75 % of radius keeps healthy
-        // overlap so the trail looks continuous.
-        private const val INTERPOLATION_STEP_M = 150f
-        // Above this, the user almost certainly didn't travel in a straight
-        // line (flight, GPS jump, suspended app over hours). Skip interpolation
-        // and just record the current fix.
-        private const val MAX_INTERPOLATION_DISTANCE_M = 5_000f
-        // Belt-and-braces time cap. The service can be killed and rehydrated
-        // hours later; without this gate, a stale prefs entry from yesterday
-        // could become the "previous fix" and we'd paint a straight line
-        // across a winding day-long path.
-        private const val MAX_INTERPOLATION_TIME_MS = 5L * 60L * 1000L
 
         fun ensureChannel(context: Context) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return

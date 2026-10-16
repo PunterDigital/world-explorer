@@ -42,7 +42,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     val percentExplored: StateFlow<Double> = points
         .map { pts ->
-            (exploredArea.update(pts) / EARTH_LAND_AREA_M2 * 100.0).coerceIn(0.0, 100.0)
+            ExploredArea.percentOfLand(exploredArea.update(pts))
         }
         .flowOn(Dispatchers.Default)
         .stateIn(
@@ -68,10 +68,5 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 repository.smoothTrail(watermark)
             }
         }
-    }
-
-    companion object {
-        // Earth's land surface area, ~148,940,000 km² (excludes oceans and seas).
-        private const val EARTH_LAND_AREA_M2 = 148_940_000_000_000.0
     }
 }

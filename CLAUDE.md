@@ -24,8 +24,11 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
 
 ## Testing
 
-- JVM unit tests in `app/src/test` (pure logic such as `TrailSmoother`; no
-  Android APIs there, they're stubs on the JVM).
+- JVM unit tests in `app/src/test` (pure logic such as `TrailSmoother`,
+  `GapFiller`, `nearbyBoxes`; no Android APIs there, they're stubs on the
+  JVM). Keep maths out of Android classes so it stays testable; distances use
+  `data/Geo.kt`'s `haversineMeters`, not `Location.distanceBetween`.
+  `TestGeo.destination()` places a point N metres along a bearing.
 - Instrumented tests in `app/src/androidTest` (Espresso + in-memory Room).
   `MainActivityE2ETest` grants location, launches, feeds a mock fused-location
   fix and checks it lands in the DB, then toggles tracking.
@@ -80,6 +83,12 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   explored area). Room rewrites an existing `schemas/<n>.json` when the
   entity changes without a version bump, so a diff to an old schema file
   means a missing bump.
+- Anything that adds or compares longitudes must handle ±180°: `GapFiller`
+  goes the short way round (`shortestLonDelta`), and the dedup query uses
+  `nearbyBoxes`, which returns two boxes across the antimeridian and a full
+  longitude band when the circle reaches a pole.
+- Managed-device runs flake on a cold emulator: `setMockMode` can still time
+  out after 60 s, and the 10,000-point % test can ANR. Rerun before debugging.
 - "% explored" is the area of the *union* of the circles (`data/ExploredArea`):
   each circle is rasterised onto ~50 m equal-area cells kept in a primitive
   long hash set, and new points are added incrementally. Don't go back to

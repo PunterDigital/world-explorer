@@ -110,6 +110,17 @@ class MainActivityE2ETest {
                 }
             }
 
+            // A fix ~1 km east: the service fills the gap with points ~143 m
+            // apart (GapFiller: ceil(1000 / 150) = 7 steps, 6 in between).
+            val eastLon = -0.1246 + 1_000.0 / (111_320.0 * Math.cos(Math.toRadians(51.5007)))
+            waitUntil("the gap to the next fix to be filled", timeoutMs = 30_000) {
+                Tasks.await(fused.setMockLocation(mockFix(51.5007, eastLon)), 10, TimeUnit.SECONDS)
+                runBlocking { dao.getAll() }.count {
+                    Math.abs(it.latitude - 51.5007) < 0.0001 &&
+                        it.longitude > -0.1246 + 0.0005 && it.longitude < eastLon - 0.0005
+                } >= 6
+            }
+
             onView(withId(R.id.btnTracking)).perform(click())
             assertFalse(TrackingPreferences(context).trackingEnabled)
             onView(withId(R.id.trackingDot))

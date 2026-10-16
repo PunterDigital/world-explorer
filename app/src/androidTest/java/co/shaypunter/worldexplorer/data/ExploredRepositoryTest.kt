@@ -60,6 +60,22 @@ class ExploredRepositoryTest {
     }
 
     @Test
+    fun pointJustAcrossTheAntimeridianIsSkipped() = runTest {
+        repository.recordIfNew(0.0, 179.9999, 200f, 1L)
+        // ~22 m east, on the other side of ±180°.
+        assertFalse(repository.recordIfNew(0.0, -179.9999, 200f, 2L))
+        assertEquals(1, db.exploredPointDao().getAll().size)
+    }
+
+    @Test
+    fun pointOnTheFarSideOfThePoleIsSkipped() = runTest {
+        repository.recordIfNew(89.9999, 0.0, 200f, 1L)
+        // ~22 m away across the North Pole.
+        assertFalse(repository.recordIfNew(89.9999, 180.0 - 1e-9, 200f, 2L))
+        assertEquals(1, db.exploredPointDao().getAll().size)
+    }
+
+    @Test
     fun smoothTrailWritesBackOnceAndAdvancesTheWatermark() = runTest {
         val dao = db.exploredPointDao()
         // East every ~50 m with an ~8 m bump on the middle point, 1 s apart.
