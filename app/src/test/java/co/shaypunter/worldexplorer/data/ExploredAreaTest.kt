@@ -95,6 +95,16 @@ class ExploredAreaTest {
         assertEquals(100_000, set.size)
     }
 
+    @Test
+    fun percentOfLandIsAShareOfEarthsLandAreaCappedAt100() {
+        val land = ExploredArea.EARTH_LAND_AREA_M2
+        assertEquals(0.0, ExploredArea.percentOfLand(0.0), 0.0)
+        assertEquals(50.0, ExploredArea.percentOfLand(land / 2), 1e-9)
+        assertEquals(100.0, ExploredArea.percentOfLand(land * 3), 0.0)
+        // One 200 m circle: ~125,664 m² of ~148.94 million km².
+        assertEquals(8.437e-8, ExploredArea.percentOfLand(ExploredArea.circleArea(r)), 1e-11)
+    }
+
     private fun assertWithin(expected: Double, actual: Double, fraction: Double) {
         assertTrue(
             "expected $expected ±${fraction * 100}%, got $actual",

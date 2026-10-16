@@ -82,6 +82,13 @@ class ExploredArea {
         private const val METERS_PER_DEGREE_LAT = 111_320.0
         private const val MIN_COS_LAT = 0.0001
 
+        // Earth's land surface area, ~148,940,000 km² (excludes oceans and seas).
+        const val EARTH_LAND_AREA_M2 = 148_940_000_000_000.0
+
+        /** [areaMeters2] as a percentage of Earth's land area, capped at 0–100. */
+        fun percentOfLand(areaMeters2: Double): Double =
+            (areaMeters2 / EARTH_LAND_AREA_M2 * 100.0).coerceIn(0.0, 100.0)
+
         /** π·r², for comparison with the rasterised area. */
         fun circleArea(radiusMeters: Double): Double = PI * radiusMeters * radiusMeters
     }
