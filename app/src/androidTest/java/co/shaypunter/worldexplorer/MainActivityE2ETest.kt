@@ -99,7 +99,8 @@ class MainActivityE2ETest {
             waitUntil("tracking to start") { TrackingPreferences(context).trackingEnabled }
             onView(withId(R.id.trackingDot)).check(matches(isDisplayed()))
 
-            Tasks.await(fused.setMockMode(true), 10, TimeUnit.SECONDS)
+            // Play services can take 20 s+ to answer on a freshly booted emulator.
+            Tasks.await(fused.setMockMode(true), 60, TimeUnit.SECONDS)
             val dao = AppDatabase.get(context).exploredPointDao()
             waitUntil("a mock fix to be recorded", timeoutMs = 60_000) {
                 // Keep pushing fixes until the service's request picks one up.

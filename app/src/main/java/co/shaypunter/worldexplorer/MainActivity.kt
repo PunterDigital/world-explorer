@@ -100,6 +100,11 @@ class MainActivity : AppCompatActivity() {
         // off the IO dispatcher and re-emits via the points Flow when done.
         viewModel.smoothTrailOnce()
 
+        // After a recreation (e.g. a font-size change) a request may still be
+        // open; its result reaches the new launcher, which carries the chain
+        // on. A second request now would be denied on the spot.
+        if (savedInstanceState != null) return
+
         if (hasLocationPermission()) {
             onLocationPermissionGranted()
         } else {
