@@ -1,6 +1,5 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
     id("androidx.room")
 }
@@ -12,12 +11,12 @@ room {
 
 android {
     namespace = "co.shaypunter.worldexplorer"
-    compileSdk = 34
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "co.shaypunter.worldexplorer"
         minSdk = 24
-        targetSdk = 34
+        targetSdk = 36
         versionCode = 4
         versionName = "0.2.1"
 
@@ -61,9 +60,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
     buildFeatures {
         viewBinding = true
@@ -71,15 +67,15 @@ android {
     }
 
     testOptions {
-        // `./gradlew pixel6Api34DebugAndroidTest` boots a throwaway emulator,
+        // `./gradlew pixel6Api36DebugAndroidTest` boots a throwaway emulator,
         // runs the instrumented tests and tears it down. Never run
         // connectedAndroidTest against a real phone: AGP uninstalls the app
         // afterwards, which deletes its explored-points database.
         managedDevices {
             localDevices {
-                create("pixel6Api34") {
+                create("pixel6Api36") {
                     device = "Pixel 6"
-                    apiLevel = 34
+                    apiLevel = 36
                     systemImageSource = "google"
                 }
             }
@@ -88,7 +84,7 @@ android {
 
     sourceSets {
         // MigrationTestHelper reads the exported schemas from the test APK assets.
-        getByName("androidTest").assets.srcDir("$projectDir/schemas")
+        getByName("androidTest").assets.directories.add("$projectDir/schemas")
     }
 
     packaging {
@@ -99,37 +95,44 @@ android {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("com.google.android.material:material:1.12.0")
-    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
-    implementation("androidx.activity:activity-ktx:1.9.1")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.4")
-    implementation("androidx.lifecycle:lifecycle-service:2.8.4")
+    implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.appcompat:appcompat:1.8.0")
+    implementation("com.google.android.material:material:1.14.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.2.2")
+    implementation("androidx.activity:activity-ktx:1.13.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-service:2.11.0")
 
     // OpenStreetMap (free, self-hosted-friendly, no API key)
-    implementation("org.osmdroid:osmdroid-android:6.1.18")
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
     implementation("androidx.preference:preference-ktx:1.2.1")
 
     // Battery-efficient fused location
-    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.google.android.gms:play-services-location:21.4.0")
 
     // Local persistence
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
+    implementation("androidx.room:room-runtime:2.8.5")
+    implementation("androidx.room:room-ktx:2.8.5")
+    ksp("androidx.room:room-compiler:2.8.5")
 
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+
+    constraints {
+        // room-testing needs kotlinx-serialization 1.8+, but lifecycle brings 1.7.3 and AGP
+        // pins the test APK to the app's versions: MigrationTest then dies with an
+        // AbstractMethodError. Lift the app's copy to match.
+        implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.8.1")
+    }
 
     // JVM unit tests
     testImplementation("junit:junit:4.13.2")
 
     // Instrumented E2E tests (run on an emulator; see CLAUDE.md)
-    androidTestImplementation("androidx.test:runner:1.6.2")
-    androidTestImplementation("androidx.test:rules:1.6.1")
-    androidTestImplementation("androidx.test.ext:junit-ktx:1.2.1")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
-    androidTestImplementation("androidx.room:room-testing:2.6.1")
-    androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test:rules:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit-ktx:1.3.0")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
+    androidTestImplementation("androidx.room:room-testing:2.8.5")
+    androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
 }

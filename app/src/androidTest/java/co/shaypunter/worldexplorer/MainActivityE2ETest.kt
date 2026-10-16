@@ -10,7 +10,10 @@ import android.location.Location
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.view.View
 import android.widget.TextView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.room.withTransaction
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -231,6 +234,49 @@ class MainActivityE2ETest {
             }
         }
     }
+
+    @Test
+    fun controlsStayClearOfTheSystemBars() {
+        TrackingPreferences(context).pausedByUser = true
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            var problems = listOf("not laid out yet")
+            waitUntil("every control to clear the system bars") {
+                scenario.onActivity { problems = systemBarProblems(it) }
+                problems.isEmpty()
+            }
+            assertTrue(problems.joinToString(), problems.isEmpty())
+        }
+    }
+
+    /** What sits under a system bar or cutout; empty when the layout is right. */
+    private fun systemBarProblems(activity: MainActivity): List<String> {
+        val root = activity.findViewById<View>(R.id.root)
+        val insets = ViewCompat.getRootWindowInsets(root)?.getInsets(
+            WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+        )
+        if (insets == null || root.height == 0) return listOf("not laid out yet")
+
+        val found = mutableListOf<String>()
+        // Edge-to-edge: the map itself runs under the status bar.
+        if (insets.top == 0) found += "no status bar inset (not edge-to-edge)"
+        if (activity.findViewById<View>(R.id.mapView).locationInWindow()[1] != 0) {
+            found += "map does not start at the top of the window"
+        }
+        listOf(R.id.statusBar, R.id.osmAttribution, R.id.btnTracking, R.id.btnCenter).forEach { id ->
+            val view = activity.findViewById<View>(id)
+            val (x, y) = view.locationInWindow()
+            val name = activity.resources.getResourceEntryName(id)
+            if (y < insets.top) found += "$name under the status bar"
+            if (y + view.height > root.height - insets.bottom) found += "$name under the navigation bar"
+            if (x < insets.left || x + view.width > root.width - insets.right) {
+                found += "$name under a side bar or cutout"
+            }
+        }
+        return found
+    }
+
+    private fun View.locationInWindow() = IntArray(2).also { getLocationInWindow(it) }
 
     private fun formatPercent(areaM2: Double) =
         String.format(Locale.US, "%08.5f%%", areaM2 / 148_940_000_000_000.0 * 100.0)

@@ -3,18 +3,27 @@ package co.shaypunter.worldexplorer
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.View
+import android.view.ViewGroup
 import android.widget.Toast
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
+import androidx.core.view.updateLayoutParams
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -88,9 +97,17 @@ class MainActivity : AppCompatActivity() {
     private val prefs by lazy { TrackingPreferences(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The map runs under the status and navigation bars (edge-to-edge is
+        // enforced from targetSdk 35). The fog is dark, so the bars get light
+        // icons on a transparent background.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
+        )
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        keepControlsClearOfSystemBars()
 
         setupMap()
         setupControls()
@@ -114,6 +131,54 @@ class MainActivity : AppCompatActivity() {
                     Manifest.permission.ACCESS_COARSE_LOCATION
                 )
             )
+        }
+    }
+
+    /**
+     * Pushes the chips and buttons in from the system bars and display cutout
+     * by their inset, on top of the margins from the layout. Each view only
+     * moves away from the edges it is anchored to.
+     */
+    private fun keepControlsClearOfSystemBars() {
+        val anchored = listOf(
+            InsetView(binding.statusBar, atTop = true),
+            InsetView(binding.osmAttribution, atTop = false),
+            InsetView(binding.btnTracking, atTop = false),
+            InsetView(binding.btnCenter, atTop = false)
+        )
+
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, windowInsets ->
+            val bars = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            anchored.forEach { it.apply(bars.left, bars.top, bars.right, bars.bottom) }
+            windowInsets
+        }
+    }
+
+    /** A view anchored to the top or bottom edge, with its margins from the layout. */
+    private class InsetView(private val view: View, private val atTop: Boolean) {
+        private val baseStart: Int
+        private val baseTop: Int
+        private val baseEnd: Int
+        private val baseBottom: Int
+
+        init {
+            val base = view.layoutParams as ViewGroup.MarginLayoutParams
+            baseStart = base.marginStart
+            baseTop = base.topMargin
+            baseEnd = base.marginEnd
+            baseBottom = base.bottomMargin
+        }
+
+        fun apply(left: Int, top: Int, right: Int, bottom: Int) {
+            val rtl = view.layoutDirection == View.LAYOUT_DIRECTION_RTL
+            view.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                marginStart = baseStart + if (rtl) right else left
+                marginEnd = baseEnd + if (rtl) left else right
+                topMargin = baseTop + if (atTop) top else 0
+                bottomMargin = baseBottom + if (atTop) 0 else bottom
+            }
         }
     }
 
@@ -225,7 +290,7 @@ class MainActivity : AppCompatActivity() {
         binding.osmAttribution.setOnClickListener {
             try {
                 startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.osm_copyright_url)))
+                    Intent(Intent.ACTION_VIEW, getString(R.string.osm_copyright_url).toUri())
                 )
             } catch (_: Throwable) {
                 // No browser installed; the credit itself is what's required.
@@ -314,7 +379,7 @@ class MainActivity : AppCompatActivity() {
                 try {
                     startActivity(
                         Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                            data = Uri.parse("package:$packageName")
+                            data = "package:$packageName".toUri()
                         }
                     )
                 } catch (_: Throwable) {
