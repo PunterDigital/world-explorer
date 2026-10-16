@@ -17,7 +17,9 @@ class WorldExplorerApp : Application() {
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
         Configuration.getInstance().apply {
             load(this@WorldExplorerApp, prefs)
-            userAgentValue = packageName
+            // OSM's tile usage policy asks for a User-Agent that identifies the app.
+            userAgentValue = "WorldExplorer/${BuildConfig.VERSION_NAME} " +
+                "(+https://github.com/PunterDigital/world-explorer)"
             osmdroidBasePath = File(cacheDir, "osmdroid")
             osmdroidTileCache = File(cacheDir, "osmdroid/tiles")
             // Keep cache reasonable to limit storage use.

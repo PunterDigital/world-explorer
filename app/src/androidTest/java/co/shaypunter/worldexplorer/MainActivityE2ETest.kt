@@ -90,12 +90,17 @@ class MainActivityE2ETest {
         ActivityScenario.launch(MainActivity::class.java).use {
             onView(withId(R.id.mapView)).check(matches(isDisplayed()))
             onView(withId(R.id.statsText)).check(matches(withSubstring("explored")))
+            // OSM attribution (tile usage policy / ODbL) stays on screen.
+            onView(withId(R.id.osmAttribution))
+                .check(matches(isDisplayed()))
+                .check(matches(withSubstring("OpenStreetMap contributors")))
 
             // Location is granted, so tracking starts automatically.
             waitUntil("tracking to start") { TrackingPreferences(context).trackingEnabled }
             onView(withId(R.id.trackingDot)).check(matches(isDisplayed()))
 
-            Tasks.await(fused.setMockMode(true), 10, TimeUnit.SECONDS)
+            // Play services can take 20 s+ to answer on a freshly booted emulator.
+            Tasks.await(fused.setMockMode(true), 60, TimeUnit.SECONDS)
             val dao = AppDatabase.get(context).exploredPointDao()
             waitUntil("a mock fix to be recorded", timeoutMs = 60_000) {
                 // Keep pushing fixes until the service's request picks one up.

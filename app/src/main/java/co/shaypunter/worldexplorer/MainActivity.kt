@@ -46,13 +46,16 @@ class MainActivity : AppCompatActivity() {
         if (granted) {
             onLocationPermissionGranted()
         } else {
-            showPermissionRationale()
+            requestNotificationPermission { showPermissionRationale() }
         }
     }
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { /* Best effort; tracking still works without notification visibility. */ }
+    ) {
+        // Best effort; tracking still works without notification visibility.
+        continuePrompts()
+    }
 
     private val backgroundLocationLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -62,7 +65,24 @@ class MainActivity : AppCompatActivity() {
             // shows a normal allow/deny. Either way, if the user said no, fall
             // back to the explainer that takes them to the app's settings page.
             showBackgroundLocationExplainer()
+        } else {
+            continuePrompts()
         }
+    }
+
+    /**
+     * First-launch prompts run one at a time (location → notifications →
+     * background location → battery). Android shows only one permission
+     * request at a time and drops the rest, and dialogs opened together stack.
+     * Each step stores what comes next here and calls [continuePrompts] once
+     * the user has answered.
+     */
+    private var nextPrompt: (() -> Unit)? = null
+
+    private fun continuePrompts() {
+        val next = nextPrompt ?: return
+        nextPrompt = null
+        next()
     }
 
     private val prefs by lazy { TrackingPreferences(this) }
@@ -80,6 +100,11 @@ class MainActivity : AppCompatActivity() {
         // off the IO dispatcher and re-emits via the points Flow when done.
         viewModel.smoothTrailOnce()
 
+        // After a recreation (e.g. a font-size change) a request may still be
+        // open; its result reaches the new launcher, which carries the chain
+        // on. A second request now would be denied on the spot.
+        if (savedInstanceState != null) return
+
         if (hasLocationPermission()) {
             onLocationPermissionGranted()
         } else {
@@ -90,16 +115,20 @@ class MainActivity : AppCompatActivity() {
                 )
             )
         }
+    }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
+    private fun requestNotificationPermission(then: () -> Unit) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            then()
+            return
         }
+        nextPrompt = then
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     /** Unregisters the tracking-state listener while the activity is stopped. */
@@ -192,6 +221,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnTracking.setOnClickListener { toggleTracking() }
+
+        binding.osmAttribution.setOnClickListener {
+            try {
+                startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.osm_copyright_url)))
+                )
+            } catch (_: Throwable) {
+                // No browser installed; the credit itself is what's required.
+            }
+        }
     }
 
     private fun observeState() {
@@ -250,8 +289,9 @@ class MainActivity : AppCompatActivity() {
             LocationTrackingService.start(this)
             updateTrackingButton()
         }
-        maybeRequestBackgroundLocation()
-        maybeRequestIgnoreBatteryOptimisations()
+        requestNotificationPermission {
+            maybeRequestBackgroundLocation { maybeRequestIgnoreBatteryOptimisations() }
+        }
     }
 
     /**
@@ -296,24 +336,30 @@ class MainActivity : AppCompatActivity() {
      * Ask once, after foreground location is granted, and remember that we
      * asked so we don't pester on every launch.
      */
-    private fun maybeRequestBackgroundLocation() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
-        if (ContextCompat.checkSelfPermission(
+    private fun maybeRequestBackgroundLocation(then: () -> Unit) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(
                 this, Manifest.permission.ACCESS_BACKGROUND_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-        ) return
-        if (prefs.backgroundLocationPrompted) return
+            ) == PackageManager.PERMISSION_GRANTED ||
+            prefs.backgroundLocationPrompted
+        ) {
+            then()
+            return
+        }
 
         prefs.backgroundLocationPrompted = true
+        nextPrompt = then
         AlertDialog.Builder(this)
             .setTitle(R.string.background_location_title)
             .setMessage(R.string.background_location_message)
             .setPositiveButton(R.string.background_location_grant) { _, _ ->
+                // The launcher's result continues the chain.
                 backgroundLocationLauncher.launch(
                     Manifest.permission.ACCESS_BACKGROUND_LOCATION
                 )
             }
-            .setNegativeButton(R.string.background_location_skip, null)
+            .setNegativeButton(R.string.background_location_skip) { _, _ -> continuePrompts() }
+            .setOnCancelListener { continuePrompts() }
             .show()
     }
 
@@ -329,6 +375,7 @@ class MainActivity : AppCompatActivity() {
                 )
             }
             .setNegativeButton(android.R.string.cancel, null)
+            .setOnDismissListener { continuePrompts() }
             .show()
     }
 
