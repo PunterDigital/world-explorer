@@ -73,8 +73,13 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   background location → battery) through `MainActivity.nextPrompt` /
   `continuePrompts()`. Android drops a permission request launched while
   another is showing, so never launch two together.
-- Room DB is version 1 with `exportSchema = false` and no migrations: any
-  entity change needs a migration or the app crashes on upgrade.
+- Room schemas are exported to `app/schemas` (committed). Any entity change
+  bumps the `AppDatabase` version, commits the new `schemas/<n>.json`, adds a
+  migration to `data/Migrations.kt` and a case in `MigrationTest`, or the app
+  crashes on upgrade. Never `fallbackToDestructiveMigration` (wipes the
+  explored area). Room rewrites an existing `schemas/<n>.json` when the
+  entity changes without a version bump, so a diff to an old schema file
+  means a missing bump.
 - "% explored" is the area of the *union* of the circles (`data/ExploredArea`):
   each circle is rasterised onto ~50 m equal-area cells kept in a primitive
   long hash set, and new points are added incrementally. Don't go back to
