@@ -122,7 +122,7 @@ dependencies {
         // room-testing needs kotlinx-serialization 1.8+, but lifecycle brings 1.7.3 and AGP
         // pins the test APK to the app's versions: MigrationTest then dies with an
         // AbstractMethodError. Lift the app's copy to match.
-        implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.8.1")
+        implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0")
     }
 
     // JVM unit tests
