@@ -6,20 +6,21 @@ clears circles where you've been. Single `:app` module, package
 
 ## Stack
 
-- AGP 8.5, Gradle 8.9, Kotlin 2.0, Java 17 target; minSdk 24 / targetSdk 34
+- AGP 9.4 (built-in Kotlin: no `kotlin-android` plugin; KGP 2.4 pinned on the
+  buildscript classpath), Gradle 9.8, KSP 2.3, Java 17 target; minSdk 24 /
+  targetSdk 36 / compileSdk 37 (androidx.core 1.19 requires 37)
 - osmdroid (OSM raster tiles), Play Services fused location, Room (KSP)
 - Foreground service `location/LocationTrackingService` does all recording;
   `MainActivity` toggles it between foreground (1 s) and background (30 s) cadence
 
 ## Commands
 
-Gradle 8.9 fails on JDK 25 (the Android Studio JBR on this machine), so point
-`JAVA_HOME` at JDK 21 first:
+Gradle 9.8 runs on JDK 17–25 (JDK 21 and the Android Studio JBR 25 both work):
 
 ```sh
 export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
 ./gradlew lintDebug testDebugUnitTest assembleDebug assembleRelease
-./gradlew pixel6Api34DebugAndroidTest -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect
+./gradlew pixel6Api36DebugAndroidTest -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect
 ```
 
 ## Testing
@@ -35,7 +36,7 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
 - Tests call `assumeEmulator()` and wipe the DB/prefs. **Never run
   `connectedAndroidTest` against Shay's phone**: AGP uninstalls the app after
   the run, deleting his explored area. Locally use the Gradle managed device
-  (`pixel6Api34…`); CI uses `reactivecircus/android-emulator-runner`.
+  (`pixel6Api36…`); CI uses `reactivecircus/android-emulator-runner`.
 - `scripts/smoke-apk.sh <apk>` installs and launches a packaged APK on a
   running emulator and fails on crash or if the tracking service didn't start.
   CI runs it against the minified release APK, so R8 breakage is caught.
@@ -54,6 +55,11 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
 
 ## Quirks
 
+- Edge-to-edge (enforced from targetSdk 35): the map draws under the system
+  bars and `MainActivity.keepControlsClearOfSystemBars()` adds the bar and
+  cutout insets to each chip/FAB's layout margins. A new control anchored to a
+  screen edge must be added there, or it ends up under the status or
+  navigation bar. Bar colours come from `enableEdgeToEdge()`, not the theme.
 - `stats_initial` must stay `formatted="false"` (literal `%` trips lint).
 - Tracking auto-starts on launch unless the user stopped it (`pausedByUser`).
   Stop paths: `LocationTrackingService.stop()` (in-app, writes prefs
