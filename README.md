@@ -31,7 +31,7 @@ file manager when Android asks. Requires Android 7.0+ with Google Play services.
 ## Stack
 
 - Kotlin 2.4 (AGP built-in Kotlin), AGP 9.4, Gradle 9.8, Java 17 bytecode
-- minSdk 24 / targetSdk 36 (compileSdk 37), edge-to-edge
+- minSdk 24 / targetSdk 37 (compileSdk 37), edge-to-edge
 - [osmdroid](https://github.com/osmdroid/osmdroid) for OSM tiles
 - Google Play Services Location (FLP)
 - Room for persistence
@@ -44,12 +44,12 @@ Needs JDK 17 or newer (CI builds on 17; 21 and 25 work too) and the Android SDK.
 ./gradlew assembleDebug        # app/build/outputs/apk/debug/
 ./gradlew assembleRelease      # minified, app/build/outputs/apk/release/
 ./gradlew lintDebug testDebugUnitTest
-./gradlew pixel6Api36DebugAndroidTest   # E2E on a throwaway emulator
+./gradlew pixel6Api37DebugAndroidTest   # E2E on a throwaway emulator
 ```
 
 CI (`.github/workflows/ci.yml`) runs lint, unit tests and both builds on every
 PR, plus the instrumented tests and an install-and-launch smoke test of the
-release APK on an API 36 emulator. Pushing a `vX.Y.Z` tag runs
+release APK on an API 37 emulator. Pushing a `vX.Y.Z` tag runs
 `release.yml`, which builds the release APK and attaches it to a GitHub Release.
 
 ### Signing

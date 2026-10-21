@@ -16,7 +16,7 @@ android {
     defaultConfig {
         applicationId = "co.shaypunter.worldexplorer"
         minSdk = 24
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 5
         versionName = "0.3.0"
 
@@ -67,16 +67,19 @@ android {
     }
 
     testOptions {
-        // `./gradlew pixel6Api36DebugAndroidTest` boots a throwaway emulator,
+        // `./gradlew pixel6Api37DebugAndroidTest` boots a throwaway emulator,
         // runs the instrumented tests and tears it down. Never run
         // connectedAndroidTest against a real phone: AGP uninstalls the app
         // afterwards, which deletes its explored-points database.
         managedDevices {
             localDevices {
-                create("pixel6Api36") {
+                create("pixel6Api37") {
                     device = "Pixel 6"
-                    apiLevel = 36
+                    apiLevel = 37
                     systemImageSource = "google"
+                    // AGP can't tell the page size of the 37.0 image and warns on every build;
+                    // the plain google_apis image (the one CI boots) is 4 KB aligned.
+                    pageAlignment = com.android.build.api.dsl.ManagedVirtualDevice.PageAlignment.FORCE_4KB_PAGES
                 }
             }
         }

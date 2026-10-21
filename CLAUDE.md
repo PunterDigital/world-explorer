@@ -8,7 +8,7 @@ clears circles where you've been. Single `:app` module, package
 
 - AGP 9.4 (built-in Kotlin: no `kotlin-android` plugin; KGP 2.4 pinned on the
   buildscript classpath), Gradle 9.8, KSP 2.3, Java 17 target; minSdk 24 /
-  targetSdk 36 / compileSdk 37 (androidx.core 1.19 requires 37)
+  targetSdk 37 / compileSdk 37
 - osmdroid (OSM raster tiles), Play Services fused location, Room (KSP)
 - Foreground service `location/LocationTrackingService` does all recording;
   `MainActivity` toggles it between foreground (1 s) and background (30 s) cadence
@@ -20,7 +20,7 @@ Gradle 9.8 runs on JDK 17–25 (JDK 21 and the Android Studio JBR 25 both work):
 ```sh
 export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
 ./gradlew lintDebug testDebugUnitTest assembleDebug assembleRelease
-./gradlew pixel6Api36DebugAndroidTest -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect
+./gradlew pixel6Api37DebugAndroidTest -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect
 ```
 
 ## Testing
@@ -36,7 +36,7 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
 - Tests call `assumeEmulator()` and wipe the DB/prefs. **Never run
   `connectedAndroidTest` against Shay's phone**: AGP uninstalls the app after
   the run, deleting his explored area. Locally use the Gradle managed device
-  (`pixel6Api36…`); CI uses `reactivecircus/android-emulator-runner`.
+  (`pixel6Api37…`); CI uses `reactivecircus/android-emulator-runner`.
 - `scripts/smoke-apk.sh <apk>` installs and launches a packaged APK on a
   running emulator and fails on crash or if the tracking service didn't start.
   CI runs it against the minified release APK, so R8 breakage is caught.
@@ -93,6 +93,13 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   goes the short way round (`shortestLonDelta`), and the dedup query uses
   `nearbyBoxes`, which returns two boxes across the antimeridian and a full
   longitude band when the circle reaches a pole.
+- Minor-versioned platforms (Android 17 is `android-37.0`, 16 QPR is `36.1`): the
+  managed device's `apiLevel = 37` resolves to the `android-37.0` google_apis
+  image by itself, but `reactivecircus/android-emulator-runner` interpolates
+  `api-level` as-is into `platforms;android-X` / `system-images;android-X;…`,
+  so CI has to say `api-level: '37.0'`, quoted: a bare `37.0` is YAML's number 37,
+  and `platforms;android-37` doesn't exist (the first CI run failed on that). The CI E2E job is
+  named without the API level because it's a required check (#2711).
 - Managed-device runs flake on a cold emulator: `setMockMode` can still time
   out after 60 s, and the 10,000-point % test can ANR. Rerun before debugging.
 - "% explored" is the area of the *union* of the circles (`data/ExploredArea`):
