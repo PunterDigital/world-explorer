@@ -97,7 +97,8 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   managed device's `apiLevel = 37` resolves to the `android-37.0` google_apis
   image by itself, but `reactivecircus/android-emulator-runner` interpolates
   `api-level` as-is into `platforms;android-X` / `system-images;android-X;…`,
-  so CI has to say `api-level: 37.0` (`37` doesn't exist). The CI E2E job is
+  so CI has to say `api-level: '37.0'`, quoted: a bare `37.0` is YAML's number 37,
+  and `platforms;android-37` doesn't exist (the first CI run failed on that). The CI E2E job is
   named without the API level because it's a required check (#2711).
 - Managed-device runs flake on a cold emulator: `setMockMode` can still time
   out after 60 s, and the 10,000-point % test can ANR. Rerun before debugging.
