@@ -93,6 +93,12 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   goes the short way round (`shortestLonDelta`), and the dedup query uses
   `nearbyBoxes`, which returns two boxes across the antimeridian and a full
   longitude band when the circle reaches a pole.
+- Minor-versioned platforms (Android 17 is `android-37.0`, 16 QPR is `36.1`): the
+  managed device's `apiLevel = 37` resolves to the `android-37.0` google_apis
+  image by itself, but `reactivecircus/android-emulator-runner` interpolates
+  `api-level` as-is into `platforms;android-X` / `system-images;android-X;…`,
+  so CI has to say `api-level: 37.0` (`37` doesn't exist). The CI E2E job is
+  named without the API level because it's a required check (#2711).
 - Managed-device runs flake on a cold emulator: `setMockMode` can still time
   out after 60 s, and the 10,000-point % test can ANR. Rerun before debugging.
 - "% explored" is the area of the *union* of the circles (`data/ExploredArea`):
