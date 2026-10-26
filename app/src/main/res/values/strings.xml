@@ -32,4 +32,29 @@
     <string name="batt_opt_message">Android aggressively pauses background apps to save battery, which causes big gaps in your trail while the screen is off. Whitelisting World Explorer keeps the GPS firing reliably while you drive.</string>
     <string name="batt_opt_grant">Whitelist</string>
     <string name="batt_opt_skip">Not now</string>
+
+    <string name="settings">Settings</string>
+    <string name="settings_update_checks">Check for updates</string>
+    <string name="settings_update_checks_summary">Once a day when you open the app, World Explorer asks GitHub for a newer release.</string>
+    <string name="settings_version">Version %1$s</string>
+    <string name="settings_check_now">Check now</string>
+    <string name="settings_done">Done</string>
+
+    <string name="update_available">Update to v%1$s</string>
+    <string name="update_downloading">Downloading v%1$s…</string>
+    <string name="update_downloading_percent">Downloading v%1$s… %2$d%%</string>
+    <string name="update_ready">Install v%1$s</string>
+    <string name="update_download_title">World Explorer v%1$s</string>
+    <string name="update_download_failed">The update didn’t download. Check your connection and try again.</string>
+    <string name="update_rejected">Didn’t install the download: %1$s.</string>
+    <string name="update_check_found">Update available: v%1$s</string>
+    <string name="update_check_up_to_date">World Explorer is up to date (v%1$s).</string>
+    <string name="update_check_failed">Couldn’t check for updates. Check your connection and try again.</string>
+    <string name="update_already_downloading">The update is still downloading.</string>
+    <string name="update_no_installer">No app on this phone can install the update.</string>
+
+    <string name="install_permission_title">Allow World Explorer to install updates</string>
+    <string name="install_permission_message">Android asks before an app installs updates itself. On the next screen, turn on <b>Allow from this source</b> for World Explorer, then go back.\n\nThe update installs over this version, so your explored map is kept.</string>
+    <string name="install_permission_continue">Continue</string>
+    <string name="install_permission_skip">Not now</string>
 </resources>

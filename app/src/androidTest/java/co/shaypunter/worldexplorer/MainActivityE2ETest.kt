@@ -8,7 +8,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Build
-import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.View
 import android.widget.TextView
@@ -26,13 +25,13 @@ import androidx.test.espresso.matcher.ViewMatchers.withEffectiveVisibility
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withSubstring
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import co.shaypunter.worldexplorer.data.AppDatabase
 import co.shaypunter.worldexplorer.data.ExploredArea
 import co.shaypunter.worldexplorer.data.ExploredPoint
 import co.shaypunter.worldexplorer.data.TrackingPreferences
 import co.shaypunter.worldexplorer.location.BootReceiver
 import co.shaypunter.worldexplorer.location.LocationTrackingService
+import co.shaypunter.worldexplorer.update.UpdatePreferences
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.tasks.Tasks
 import java.util.Locale
@@ -43,7 +42,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
-import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -79,6 +77,11 @@ class MainActivityE2ETest {
             clearLastFix()
             backgroundLocationPrompted = true
             batteryOptPrompted = true
+        }
+        // No update checks against the real GitHub feed here (UpdateE2ETest covers them).
+        UpdatePreferences(context).apply {
+            clear()
+            checksEnabled = false
         }
     }
 
@@ -263,7 +266,7 @@ class MainActivityE2ETest {
         if (activity.findViewById<View>(R.id.mapView).locationInWindow()[1] != 0) {
             found += "map does not start at the top of the window"
         }
-        listOf(R.id.statusBar, R.id.osmAttribution, R.id.btnTracking, R.id.btnCenter).forEach { id ->
+        listOf(R.id.statusBar, R.id.btnSettings, R.id.osmAttribution, R.id.btnTracking, R.id.btnCenter).forEach { id ->
             val view = activity.findViewById<View>(id)
             val (x, y) = view.locationInWindow()
             val name = activity.resources.getResourceEntryName(id)
@@ -295,18 +298,4 @@ class MainActivityE2ETest {
             .getRunningServices(Int.MAX_VALUE)
             .any { it.service.className == LocationTrackingService::class.java.name }
 
-    private fun shell(cmd: String) {
-        // Drain the output so the command has finished before we carry on.
-        val pfd = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(cmd)
-        ParcelFileDescriptor.AutoCloseInputStream(pfd).use { it.readBytes() }
-    }
-
-    private fun waitUntil(what: String, timeoutMs: Long = 15_000, condition: () -> Boolean) {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (SystemClock.uptimeMillis() < deadline) {
-            if (condition()) return
-            Thread.sleep(500)
-        }
-        fail("Timed out waiting for $what")
-    }
 }
