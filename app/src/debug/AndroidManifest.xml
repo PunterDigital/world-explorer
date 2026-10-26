@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: instrumented tests serve a fake release feed and APK
+     over plain http from the device itself (UpdateFeed.testOverrideUrl). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:networkSecurityConfig="@xml/network_security_config"
+        tools:ignore="UnusedAttribute" />
+</manifest>

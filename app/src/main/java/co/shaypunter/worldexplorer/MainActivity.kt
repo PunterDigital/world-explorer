@@ -1,6 +1,7 @@
 package co.shaypunter.worldexplorer
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -29,8 +30,13 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import co.shaypunter.worldexplorer.data.TrackingPreferences
 import co.shaypunter.worldexplorer.databinding.ActivityMainBinding
+import co.shaypunter.worldexplorer.databinding.DialogSettingsBinding
 import co.shaypunter.worldexplorer.location.LocationTrackingService
 import co.shaypunter.worldexplorer.ui.FogOverlay
+import co.shaypunter.worldexplorer.update.AppUpdater
+import co.shaypunter.worldexplorer.update.UpdateEvent
+import co.shaypunter.worldexplorer.update.UpdateUiState
+import co.shaypunter.worldexplorer.update.UpdateViewModel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -43,6 +49,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private val viewModel: MainViewModel by viewModels()
+    private val updateViewModel: UpdateViewModel by viewModels()
+    private val updater by lazy { AppUpdater(this) }
 
     private val fogOverlay = FogOverlay()
     private lateinit var myLocationOverlay: MyLocationNewOverlay
@@ -96,6 +104,17 @@ class MainActivity : AppCompatActivity() {
 
     private val prefs by lazy { TrackingPreferences(this) }
 
+    /**
+     * Back from Android's "Install unknown apps" screen. If the user allowed
+     * it, carry on with what the update chip offered (download or install).
+     * After a process restart the chip's state comes back from the prefs.
+     */
+    private val installPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (updater.canRequestInstalls()) onUpdateChipClicked()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // The map runs under the status and navigation bars (edge-to-edge is
         // enforced from targetSdk 35). The fog is dark, so the bars get light
@@ -116,6 +135,8 @@ class MainActivity : AppCompatActivity() {
         // One-shot cleanup of GPS-noise jitter in the existing trail. Runs
         // off the IO dispatcher and re-emits via the points Flow when done.
         viewModel.smoothTrailOnce()
+        // At most once a day (and not at all when turned off in settings).
+        if (savedInstanceState == null) updateViewModel.checkOnLaunch()
 
         // After a recreation (e.g. a font-size change) a request may still be
         // open; its result reaches the new launcher, which carries the chain
@@ -141,7 +162,8 @@ class MainActivity : AppCompatActivity() {
      */
     private fun keepControlsClearOfSystemBars() {
         val anchored = listOf(
-            InsetView(binding.statusBar, atTop = true),
+            InsetView(binding.topChips, atTop = true),
+            InsetView(binding.btnSettings, atTop = true),
             InsetView(binding.osmAttribution, atTop = false),
             InsetView(binding.btnTracking, atTop = false),
             InsetView(binding.btnCenter, atTop = false)
@@ -286,6 +308,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnTracking.setOnClickListener { toggleTracking() }
+        binding.btnUpdate.setOnClickListener { onUpdateChipClicked() }
+        binding.btnSettings.setOnClickListener { showSettings() }
 
         binding.osmAttribution.setOnClickListener {
             try {
@@ -307,6 +331,8 @@ class MainActivity : AppCompatActivity() {
                         binding.mapView.postInvalidate()
                     }
                 }
+                launch { updateViewModel.state.collect(::showUpdateState) }
+                launch { updateViewModel.events.collect(::onUpdateEvent) }
                 launch {
                     viewModel.percentExplored.collectLatest { pct ->
                         val formatted = String.format(Locale.US, "%08.5f%%", pct)
@@ -316,6 +342,91 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun showUpdateState(state: UpdateUiState) {
+        binding.btnUpdate.isVisible = state !is UpdateUiState.Hidden
+        binding.btnUpdate.text = when (state) {
+            UpdateUiState.Hidden -> ""
+            is UpdateUiState.Available -> getString(R.string.update_available, state.release.version)
+            is UpdateUiState.Downloading -> state.percent
+                ?.let { getString(R.string.update_downloading_percent, state.release.version, it) }
+                ?: getString(R.string.update_downloading, state.release.version)
+            is UpdateUiState.Ready -> getString(R.string.update_ready, state.release.version)
+        }
+    }
+
+    private fun onUpdateEvent(event: UpdateEvent) {
+        when (event) {
+            is UpdateEvent.Message -> Toast.makeText(this, event.text, Toast.LENGTH_LONG).show()
+            is UpdateEvent.OpenInstaller -> try {
+                startActivity(updater.installIntent(event.file))
+            } catch (_: ActivityNotFoundException) {
+                Toast.makeText(this, R.string.update_no_installer, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    /**
+     * The update chip: download the release, or install it once downloaded.
+     * Both need "Install unknown apps" for World Explorer (Android 8+), so the
+     * first time we explain that before sending the user to the setting.
+     */
+    private fun onUpdateChipClicked() {
+        val state = updateViewModel.state.value
+        if (state is UpdateUiState.Downloading) {
+            Toast.makeText(this, R.string.update_already_downloading, Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (state !is UpdateUiState.Available && state !is UpdateUiState.Ready) return
+        if (!updater.canRequestInstalls()) {
+            showInstallPermissionExplainer()
+            return
+        }
+        proceedWithUpdate()
+    }
+
+    private fun proceedWithUpdate() {
+        when (updateViewModel.state.value) {
+            is UpdateUiState.Ready -> updateViewModel.install()
+            is UpdateUiState.Available -> updateViewModel.download()
+            else -> Unit
+        }
+    }
+
+    private fun showInstallPermissionExplainer() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.install_permission_title)
+            .setMessage(R.string.install_permission_message)
+            .setPositiveButton(R.string.install_permission_continue) { _, _ ->
+                // Before Android 8 canRequestInstalls() is always true, so this is 8+.
+                val opened = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && try {
+                    installPermissionLauncher.launch(updater.installSourceSettingsIntent())
+                    true
+                } catch (_: ActivityNotFoundException) {
+                    false
+                }
+                // No such screen on this build of Android: let the installer ask.
+                if (!opened) proceedWithUpdate()
+            }
+            .setNegativeButton(R.string.install_permission_skip, null)
+            .show()
+    }
+
+    private fun showSettings() {
+        val dialogBinding = DialogSettingsBinding.inflate(layoutInflater)
+        dialogBinding.switchUpdateChecks.isChecked = updateViewModel.checksEnabled
+        dialogBinding.switchUpdateChecks.setOnCheckedChangeListener { _, checked ->
+            updateViewModel.setChecksEnabled(checked)
+        }
+        dialogBinding.versionText.text =
+            getString(R.string.settings_version, updateViewModel.installedVersion)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings)
+            .setView(dialogBinding.root)
+            .setPositiveButton(R.string.settings_done, null)
+            .setNeutralButton(R.string.settings_check_now) { _, _ -> updateViewModel.checkNow() }
+            .show()
     }
 
     private fun toggleTracking() {

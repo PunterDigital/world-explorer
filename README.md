@@ -69,6 +69,17 @@ public: only install World Explorer APKs from this repo's Releases.
   notification.
 - `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_LOCATION` — for the tracking
   service.
+- `REQUEST_INSTALL_PACKAGES` — in-app updates. The first time you tap
+  *Update to vX.Y.Z*, Android asks you to allow *Install unknown apps* for
+  World Explorer.
+
+## Updates
+
+Once a day, when you open the app, World Explorer checks this repo's latest
+GitHub release. If it's newer, an *Update to vX.Y.Z* button appears on the
+map: tap it to download the APK and open Android's installer. The update
+installs over your current version and keeps your explored area. Turn the
+daily check off (or check now) from the gear button.
 
 ## Tuning
 

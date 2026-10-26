@@ -53,6 +53,45 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   #2429) that the public debug key is fine for this personal app: don't raise it again.
 - Asset name: `WorldExplorer-vX.Y.Z.apk` (registry pattern `\.apk$`).
 
+## In-app updates (`update/`)
+
+- On launch (at most once a day, `UpdatePolicy.shouldCheckForUpdate`) the app
+  reads GitHub's `releases/latest`, caches the release in the `updates` prefs
+  and shows the "Update to vX.Y.Z" chip under the % chip. Tapping it explains
+  and opens "Install unknown apps" if needed, downloads the APK with
+  DownloadManager into `getExternalFilesDir("updates")`, checks it
+  (`rejectDownloadedApk`: our package, the advertised versionName, a higher
+  versionCode, and GitHub's `sha256:` asset digest) and opens the installer
+  through the `${applicationId}.updates` FileProvider. The gear button's
+  dialog has the "Check for updates" toggle and "Check now".
+- The update relies on the release workflow's asset name
+  (`WorldExplorer-vX.Y.Z.apk`), the tag matching `versionName`, a bumped
+  `versionCode`, and the same signing key. Break any of these and the app
+  refuses the download (or Android refuses the install).
+- Pure logic (version compare, asset pick, digest, policy) is JVM-tested.
+  `org.json` is a stub in android.jar, so `testImplementation("org.json:json")`
+  provides the real one for `ReleaseFeedTest`.
+- Test hooks, honoured only when `BuildConfig.DEBUG`: `UpdateFeed.testOverrideUrl`
+  (fake feed) and `AppUpdater.installPermissionTestOverride`. `UpdateE2ETest`
+  runs `FakeReleaseServer`, a raw socket on 127.0.0.1 (DownloadManager fetches
+  from its own process); `src/debug` allows cleartext to localhost only.
+- Don't toggle `REQUEST_INSTALL_PACKAGES` with `appops` in a test: revoking it
+  (allow → default/deny) kills the app's process, instrumentation included
+  ("Test failed with status -1", and the rest of the class never runs).
+  Granting it from Settings does not restart the app (checked on API 37).
+- DownloadManager's job waits for a *validated* network, even for a loopback
+  URL. This PC's emulators get no working DNS by default (the Gradle managed
+  device too: OSM tiles fail with UnknownHostException), so the network never
+  validates and downloads sit pending: the download test skips itself there.
+  Boot a scratch emulator with `-dns-server 8.8.8.8` to run it locally.
+- Manual end-to-end check (card #3355): build a release with
+  `versionCode`/`versionName` lowered (e.g. 5 / 0.3.9), install it on a
+  scratch emulator, record some fixes, tap the chip: it fetches the real latest
+  release and installs it over itself. With `adb root` (google_apis images)
+  `sqlite3 /data/data/co.shaypunter.worldexplorer/databases/world-explorer.db`
+  shows the points before and after, and `dumpsys package` keeps the same
+  `firstInstallTime`.
+
 ## Quirks
 
 - Edge-to-edge (enforced from targetSdk 35): the map draws under the system

@@ -130,6 +130,8 @@ dependencies {
 
     // JVM unit tests
     testImplementation("junit:junit:4.13.2")
+    // android.jar's org.json is a stub on the JVM; the release-feed parser tests need the real one.
+    testImplementation("org.json:json:20260814")
 
     // Instrumented E2E tests (run on an emulator; see CLAUDE.md)
     androidTestImplementation("androidx.test:runner:1.7.0")
