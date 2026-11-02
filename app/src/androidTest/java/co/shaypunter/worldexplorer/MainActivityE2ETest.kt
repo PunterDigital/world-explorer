@@ -17,7 +17,6 @@ import androidx.room.withTransaction
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso.onView
-import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.Visibility
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
@@ -127,13 +126,13 @@ class MainActivityE2ETest {
                 } >= 6
             }
 
-            onView(withId(R.id.btnTracking)).perform(click())
-            assertFalse(TrackingPreferences(context).trackingEnabled)
+            tapTracking(it)
+            waitUntil("tracking to stop") { !TrackingPreferences(context).trackingEnabled }
             onView(withId(R.id.trackingDot))
                 .check(matches(withEffectiveVisibility(Visibility.GONE)))
 
-            onView(withId(R.id.btnTracking)).perform(click())
-            assertTrue(TrackingPreferences(context).trackingEnabled)
+            tapTracking(it)
+            waitUntil("tracking to restart") { TrackingPreferences(context).trackingEnabled }
             onView(withId(R.id.trackingDot)).check(matches(isDisplayed()))
         }
     }
@@ -280,6 +279,14 @@ class MainActivityE2ETest {
     }
 
     private fun View.locationInWindow() = IntArray(2).also { getLocationInWindow(it) }
+
+    /**
+     * performClick rather than Espresso's click(): on a slow CI emulator a tap
+     * can "oversleep" into a long press and never toggle (as in UpdateE2ETest).
+     */
+    private fun tapTracking(scenario: ActivityScenario<MainActivity>) {
+        scenario.onActivity { it.findViewById<View>(R.id.btnTracking).performClick() }
+    }
 
     private fun formatPercent(areaM2: Double) =
         String.format(Locale.US, "%08.5f%%", areaM2 / 148_940_000_000_000.0 * 100.0)
