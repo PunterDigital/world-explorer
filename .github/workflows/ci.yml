@@ -14,6 +14,23 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    # Release bumps (`chore(release)`: version lines + CHANGELOG only) skip the heavy
+    # job below: the tag's release workflow builds and checks the packages anyway.
+    name: Detect release bump
+    runs-on: ubuntu-latest
+    outputs:
+      version_only: ${{ steps.check.outputs.version_only }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: check
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: echo "version_only=$(node scripts/is-version-bump.mjs "$BASE" "$HEAD")" | tee -a "$GITHUB_OUTPUT"
+
   build:
     name: Lint, unit tests, build
     runs-on: ubuntu-latest
@@ -50,6 +67,8 @@ jobs:
 
   e2e:
     name: E2E (emulator)
+    needs: changes
+    if: needs.changes.outputs.version_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
