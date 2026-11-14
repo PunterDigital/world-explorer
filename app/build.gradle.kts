@@ -17,8 +17,8 @@ android {
         applicationId = "co.shaypunter.worldexplorer"
         minSdk = 24
         targetSdk = 37
-        versionCode = 8
-        versionName = "0.5.1"
+        versionCode = 9
+        versionName = "0.5.2"
 
         vectorDrawables.useSupportLibrary = true
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
