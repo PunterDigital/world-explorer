@@ -53,6 +53,11 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   #2429) that the public debug key is fine for this personal app: don't raise it again.
 - Asset name: `WorldExplorer-vX.Y.Z.apk` (registry pattern `\.apk$`).
 
+- Release bumps skip the heavy CI (Shay, Nov 14). The `Detect release bump` job runs
+  `scripts/is-version-bump.mjs <base> <head>` (merge-base diff): when only the version lines in `app/build.gradle.kts` (`versionCode` / `versionName`)
+  and `CHANGELOG.md` change, the `E2E (emulator)` job is skipped by `if:` (a skipped job still satisfies its required check). The tag's release workflow still builds and checks everything.
+  Keep a release commit to exactly those edits, or it gets the full run. New version files go in the script's `RULES`.
+
 ## In-app updates (`update/`)
 
 - On launch (at most once a day, `UpdatePolicy.shouldCheckForUpdate`) the app
