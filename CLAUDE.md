@@ -69,6 +69,25 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   versionCode, and GitHub's `sha256:` asset digest) and opens the installer
   through the `${applicationId}.updates` FileProvider. The gear button's
   dialog has the "Check for updates" toggle and "Check now".
+- "Download updates automatically" (settings, off by default, greyed out while
+  checks are off, #4684): a found release downloads Wi-Fi only
+  (`setAllowedOverMetered(false)`) with no tap. The chip keeps saying "Update
+  to vX" while it downloads and "Install vX" once it's verified. A tap during
+  a download still queued for Wi-Fi restarts it on any network; a tap during a
+  running one follows it and opens the installer at the end
+  (`tapDuringBackgroundDownload`). An automatic download that fails, is
+  rejected or is cancelled records `autoDownloadSkippedVersion`, so that
+  version is only retried by a tap (no loop over a bad release).
+- Installs go through a `PackageInstaller` session (`installWithSession`), not
+  `ACTION_VIEW`, so World Explorer becomes the installer of record. On Android
+  12+ the session asks for `USER_ACTION_NOT_REQUIRED`: the first update still
+  shows Android's confirmation (installer of record was the browser/adb), later
+  ones install silently after the tap. The answer comes back as a PendingIntent
+  to `MainActivity` (`ACTION_INSTALL_STATUS`, `onNewIntent`), which shows the
+  confirmation intent or a "didn't install" toast. If the session can't be
+  created, it falls back to the old `ACTION_VIEW` installer.
+  Test hooks (debug only): `forceUserActionTestOverride` (always ask, so a test
+  can never replace the app under test) and `confirmIntentTestSink`.
 - The update relies on the release workflow's asset name
   (`WorldExplorer-vX.Y.Z.apk`), the tag matching `versionName`, a bumped
   `versionCode`, and the same signing key. Break any of these and the app
@@ -89,6 +108,11 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   device too: OSM tiles fail with UnknownHostException), so the network never
   validates and downloads sit pending: the download test skips itself there.
   Boot a scratch emulator with `-dns-server 8.8.8.8` to run it locally.
+  (Nov 16 the managed device's network did validate, and both download tests
+  ran: check the report for skips before assuming either way.)
+- `ActivityScenario` matches lifecycle events by `activity.intent`: never
+  `setIntent()` in `MainActivity` (the install-status handler did once, and
+  `close()` then hung waiting for DESTROYED).
 - Manual end-to-end check (card #3355): build a release with
   `versionCode`/`versionName` lowered (e.g. 5 / 0.3.9), install it on a
   scratch emulator, record some fixes, tap the chip: it fetches the real latest

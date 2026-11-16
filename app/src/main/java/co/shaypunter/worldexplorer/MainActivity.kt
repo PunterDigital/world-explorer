@@ -3,6 +3,7 @@ package co.shaypunter.worldexplorer
 import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
@@ -10,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
@@ -20,6 +22,7 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -34,6 +37,8 @@ import co.shaypunter.worldexplorer.databinding.DialogSettingsBinding
 import co.shaypunter.worldexplorer.location.LocationTrackingService
 import co.shaypunter.worldexplorer.ui.FogOverlay
 import co.shaypunter.worldexplorer.update.AppUpdater
+import co.shaypunter.worldexplorer.update.InstallStatusAction
+import co.shaypunter.worldexplorer.update.installStatusAction
 import co.shaypunter.worldexplorer.update.UpdateEvent
 import co.shaypunter.worldexplorer.update.UpdateUiState
 import co.shaypunter.worldexplorer.update.UpdateViewModel
@@ -136,7 +141,11 @@ class MainActivity : AppCompatActivity() {
         // off the IO dispatcher and re-emits via the points Flow when done.
         viewModel.smoothTrailOnce()
         // At most once a day (and not at all when turned off in settings).
-        if (savedInstanceState == null) updateViewModel.checkOnLaunch()
+        if (savedInstanceState == null) {
+            updateViewModel.checkOnLaunch()
+            // Started by an install session's answer after the activity was gone.
+            handleInstallStatus(intent)
+        }
 
         // After a recreation (e.g. a font-size change) a request may still be
         // open; its result reaches the new launcher, which carries the chain
@@ -349,10 +358,54 @@ class MainActivity : AppCompatActivity() {
         binding.btnUpdate.text = when (state) {
             UpdateUiState.Hidden -> ""
             is UpdateUiState.Available -> getString(R.string.update_available, state.release.version)
-            is UpdateUiState.Downloading -> state.percent
-                ?.let { getString(R.string.update_downloading_percent, state.release.version, it) }
-                ?: getString(R.string.update_downloading, state.release.version)
+            // An automatic download stays quiet: the chip keeps offering the update.
+            is UpdateUiState.Downloading -> if (state.background) {
+                getString(R.string.update_available, state.release.version)
+            } else {
+                state.percent
+                    ?.let { getString(R.string.update_downloading_percent, state.release.version, it) }
+                    ?: getString(R.string.update_downloading, state.release.version)
+            }
             is UpdateUiState.Ready -> getString(R.string.update_ready, state.release.version)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleInstallStatus(intent)
+    }
+
+    /**
+     * Android's answer to an install session (AppUpdater.installWithSession):
+     * show its confirmation, or say why it failed. On success the app is
+     * being replaced, so there's nothing to do.
+     */
+    private fun handleInstallStatus(intent: Intent?) {
+        // onCreate only passes the launch intent when there's no saved state, so a
+        // configuration change doesn't show the same answer twice.
+        if (intent?.action != AppUpdater.ACTION_INSTALL_STATUS) return
+        val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+        when (installStatusAction(status)) {
+            InstallStatusAction.CONFIRM -> {
+                val confirm = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java)
+                    ?: return
+                val sink = AppUpdater.confirmIntentTestSink
+                if (BuildConfig.DEBUG && sink != null) {
+                    sink(confirm)
+                    return
+                }
+                try {
+                    startActivity(confirm)
+                } catch (_: ActivityNotFoundException) {
+                    Toast.makeText(this, R.string.update_no_installer, Toast.LENGTH_LONG).show()
+                }
+            }
+            InstallStatusAction.FAILED -> {
+                val detail = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+                Log.w("AppUpdate", "Install failed: status $status, $detail")
+                Toast.makeText(this, R.string.update_install_failed, Toast.LENGTH_LONG).show()
+            }
+            InstallStatusAction.INSTALLED, InstallStatusAction.CANCELLED -> Unit
         }
     }
 
@@ -374,11 +427,13 @@ class MainActivity : AppCompatActivity() {
      */
     private fun onUpdateChipClicked() {
         val state = updateViewModel.state.value
-        if (state is UpdateUiState.Downloading) {
+        if (state is UpdateUiState.Downloading && !state.background) {
             Toast.makeText(this, R.string.update_already_downloading, Toast.LENGTH_SHORT).show()
             return
         }
-        if (state !is UpdateUiState.Available && state !is UpdateUiState.Ready) return
+        if (state !is UpdateUiState.Available && state !is UpdateUiState.Ready &&
+            state !is UpdateUiState.Downloading
+        ) return
         if (!updater.canRequestInstalls()) {
             showInstallPermissionExplainer()
             return
@@ -389,7 +444,7 @@ class MainActivity : AppCompatActivity() {
     private fun proceedWithUpdate() {
         when (updateViewModel.state.value) {
             is UpdateUiState.Ready -> updateViewModel.install()
-            is UpdateUiState.Available -> updateViewModel.download()
+            is UpdateUiState.Available, is UpdateUiState.Downloading -> updateViewModel.download()
             else -> Unit
         }
     }
@@ -416,8 +471,14 @@ class MainActivity : AppCompatActivity() {
     private fun showSettings() {
         val dialogBinding = DialogSettingsBinding.inflate(layoutInflater)
         dialogBinding.switchUpdateChecks.isChecked = updateViewModel.checksEnabled
+        dialogBinding.switchAutoDownload.isChecked = updateViewModel.autoDownloadEnabled
+        dialogBinding.switchAutoDownload.isEnabled = updateViewModel.checksEnabled
         dialogBinding.switchUpdateChecks.setOnCheckedChangeListener { _, checked ->
             updateViewModel.setChecksEnabled(checked)
+            dialogBinding.switchAutoDownload.isEnabled = checked
+        }
+        dialogBinding.switchAutoDownload.setOnCheckedChangeListener { _, checked ->
+            updateViewModel.setAutoDownload(checked)
         }
         dialogBinding.versionText.text =
             getString(R.string.settings_version, updateViewModel.installedVersion)

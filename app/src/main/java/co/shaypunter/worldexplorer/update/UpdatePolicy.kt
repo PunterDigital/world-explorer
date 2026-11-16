@@ -42,3 +42,50 @@ fun rejectDownloadedApk(
     facts.versionCode <= installedVersionCode -> "APK isn't newer than the installed app"
     else -> null
 }
+
+/**
+ * Whether a found release should start downloading by itself: the user turned
+ * on automatic downloads (and update checks), the release is newer than the
+ * installed app, and an earlier automatic download of that same version
+ * didn't fail, get rejected or get cancelled (then only a tap retries it, so a
+ * bad release isn't fetched over and over).
+ */
+fun shouldAutoDownload(
+    autoDownload: Boolean,
+    checksEnabled: Boolean,
+    releaseVersion: String?,
+    installedVersion: String,
+    skippedVersion: String?
+): Boolean {
+    if (!autoDownload || !checksEnabled || releaseVersion == null) return false
+    if (!isNewerVersion(releaseVersion, installedVersion)) return false
+    return skippedVersion == null || Version.parse(skippedVersion) != Version.parse(releaseVersion)
+}
+
+/** What a tap on the chip does while an automatic download is under way. */
+enum class BackgroundTap {
+    /** Still queued (e.g. waiting for Wi-Fi): start over as a normal download on any network. */
+    RESTART,
+
+    /** Already transferring: keep it, show its progress and open the installer when done. */
+    FOLLOW
+}
+
+fun tapDuringBackgroundDownload(waiting: Boolean): BackgroundTap =
+    if (waiting) BackgroundTap.RESTART else BackgroundTap.FOLLOW
+
+/** What the app does with a `PackageInstaller` session status. */
+enum class InstallStatusAction { CONFIRM, INSTALLED, CANCELLED, FAILED }
+
+/** Maps `PackageInstaller.EXTRA_STATUS` (values copied, so this stays a JVM test). */
+fun installStatusAction(status: Int): InstallStatusAction = when (status) {
+    STATUS_PENDING_USER_ACTION -> InstallStatusAction.CONFIRM
+    STATUS_SUCCESS -> InstallStatusAction.INSTALLED
+    STATUS_FAILURE_ABORTED -> InstallStatusAction.CANCELLED
+    else -> InstallStatusAction.FAILED
+}
+
+// android.content.pm.PackageInstaller constants.
+internal const val STATUS_PENDING_USER_ACTION = -1
+internal const val STATUS_SUCCESS = 0
+internal const val STATUS_FAILURE_ABORTED = 3

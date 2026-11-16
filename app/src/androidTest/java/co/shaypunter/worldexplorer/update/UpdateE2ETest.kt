@@ -15,6 +15,9 @@ import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.ViewMatchers.isChecked
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
+import androidx.test.espresso.matcher.ViewMatchers.isEnabled
+import androidx.test.espresso.matcher.ViewMatchers.isNotChecked
+import androidx.test.espresso.matcher.ViewMatchers.isNotEnabled
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withSubstring
 import androidx.test.espresso.matcher.ViewMatchers.withText
@@ -88,6 +91,9 @@ class UpdateE2ETest {
         prefs.clear()
         AppUpdater(context).deleteDownloads()
         AppUpdater.installPermissionTestOverride = null
+        AppUpdater.forceUserActionTestOverride = false
+        AppUpdater.confirmIntentTestSink = null
+        AppUpdater(context).abandonOpenSessions()
     }
 
     @Test
@@ -214,6 +220,94 @@ class UpdateE2ETest {
             }
             // Back to offering the update.
             waitForChip(scenario, "Update to v99.0.0")
+        }
+    }
+
+    @Test
+    fun autoDownloadToggleFollowsUpdateChecks() {
+        server.feedJson = server.release("v${BuildConfig.VERSION_NAME}")
+
+        launch {
+            onView(withId(R.id.btnSettings)).perform(click())
+            onView(withId(R.id.switchAutoDownload)).inRoot(isDialog())
+                .check(matches(isNotChecked()))
+                .check(matches(isEnabled()))
+                .perform(click())
+            assertTrue(prefs.autoDownload)
+
+            // Without update checks there's nothing to download.
+            onView(withId(R.id.switchUpdateChecks)).inRoot(isDialog()).perform(click())
+            onView(withId(R.id.switchAutoDownload)).inRoot(isDialog())
+                .check(matches(isChecked()))
+                .check(matches(isNotEnabled()))
+            onView(withText(R.string.settings_done)).inRoot(isDialog()).perform(click())
+            assertFalse(prefs.checksEnabled)
+            assertTrue(prefs.autoDownload)
+        }
+
+        // Kept across launches.
+        launch {
+            onView(withId(R.id.btnSettings)).perform(click())
+            onView(withId(R.id.switchAutoDownload)).inRoot(isDialog())
+                .check(matches(isChecked()))
+                .check(matches(isNotEnabled()))
+        }
+    }
+
+    @Test
+    fun autoDownloadFetchesTheApkWithoutATap() {
+        val network = context.getSystemService(ConnectivityManager::class.java).let {
+            it.getNetworkCapabilities(it.activeNetwork)
+        }
+        assumeTrue(
+            "DownloadManager needs a validated network (emulator DNS working)",
+            network?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+        )
+        // Automatic downloads stay off metered networks, so they'd never start on one.
+        assumeTrue(
+            "automatic downloads wait for an unmetered network",
+            network?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) == true
+        )
+        prefs.autoDownload = true
+        // The app's own APK as "v99.0.0": downloaded with nobody tapping, then
+        // rejected (wrong version) and not fetched again by itself.
+        val ownApk = File(context.applicationInfo.sourceDir)
+        server.apkBytes = ownApk.readBytes()
+        server.feedJson = server.release(newer, sha256 = AppUpdater.sha256(ownApk))
+
+        launch { scenario ->
+            waitUntil("DownloadManager to fetch the APK by itself", timeoutMs = 60_000) {
+                "/download/WorldExplorer-v99.0.0.apk" in server.requests
+            }
+            waitUntil("the rejected download to be discarded", timeoutMs = 60_000) {
+                prefs.downloadId == null && updatesDir().listFiles().isNullOrEmpty()
+            }
+            assertEquals("99.0.0", prefs.autoDownloadSkippedVersion)
+            waitForChip(scenario, "Update to v99.0.0")
+            Thread.sleep(3_000)
+            assertEquals(
+                "a rejected version isn't fetched again: ${server.requests}",
+                1, server.requests.count { it.startsWith("/download/") }
+            )
+        }
+    }
+
+    @Test
+    fun installSessionAsksForConfirmation() {
+        // Never let Android install silently here: it would replace the app under test.
+        AppUpdater.forceUserActionTestOverride = true
+        val confirmations = java.util.concurrent.CopyOnWriteArrayList<android.content.Intent>()
+        AppUpdater.confirmIntentTestSink = { confirmations += it }
+        // Not in the updates folder: the app clears that on launch when nothing is pending.
+        val apk = File(context.cacheDir, "WorldExplorer-v99.0.0.apk")
+        File(context.applicationInfo.sourceDir).copyTo(apk, overwrite = true)
+
+        launch {
+            AppUpdater(context).installWithSession(apk)
+            // The session reports back to MainActivity, which would show this.
+            waitUntil("the installer's confirmation", timeoutMs = 30_000) { confirmations.isNotEmpty() }
+            assertNotNull(confirmations.first().action)
+            assertEquals(1, context.packageManager.packageInstaller.mySessions.size)
         }
     }
 
