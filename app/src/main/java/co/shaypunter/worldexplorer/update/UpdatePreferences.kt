@@ -62,6 +62,21 @@ class UpdatePreferences(context: Context) {
         get() = prefs.getString(KEY_DOWNLOAD_VERSION, null)
         set(value) = prefs.edit { putString(KEY_DOWNLOAD_VERSION, value) }
 
+    /** The settings toggle: download a found release in the background (Wi-Fi only). Off by default. */
+    var autoDownload: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_DOWNLOAD, false)
+        set(value) = prefs.edit { putBoolean(KEY_AUTO_DOWNLOAD, value) }
+
+    /** Whether [downloadId] was started automatically (Wi-Fi only, no installer when done). */
+    var downloadBackground: Boolean
+        get() = prefs.getBoolean(KEY_DOWNLOAD_BACKGROUND, false)
+        set(value) = prefs.edit { putBoolean(KEY_DOWNLOAD_BACKGROUND, value) }
+
+    /** A version whose automatic download failed, was rejected or cancelled: only a tap retries it. */
+    var autoDownloadSkippedVersion: String?
+        get() = prefs.getString(KEY_AUTO_SKIPPED, null)
+        set(value) = prefs.edit { putString(KEY_AUTO_SKIPPED, value) }
+
     fun clear() = prefs.edit(commit = true) { clear() }
 
     companion object {
@@ -75,5 +90,8 @@ class UpdatePreferences(context: Context) {
         private const val KEY_SHA256 = "latest_apk_sha256"
         private const val KEY_DOWNLOAD_ID = "download_id"
         private const val KEY_DOWNLOAD_VERSION = "download_version"
+        private const val KEY_AUTO_DOWNLOAD = "auto_download"
+        private const val KEY_DOWNLOAD_BACKGROUND = "download_background"
+        private const val KEY_AUTO_SKIPPED = "auto_download_skipped_version"
     }
 }

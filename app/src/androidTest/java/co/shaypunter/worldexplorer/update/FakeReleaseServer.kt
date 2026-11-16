@@ -41,7 +41,14 @@ class FakeReleaseServer : Closeable {
                 } catch (_: Exception) {
                     break
                 }
-                thread(isDaemon = true) { socket.use(::serve) }
+                thread(isDaemon = true) {
+                    // A client that hangs up mid-response (DownloadManager when a test
+                    // cancels its download) must not crash the app under test.
+                    try {
+                        socket.use(::serve)
+                    } catch (_: java.io.IOException) {
+                    }
+                }
             }
         }
     }

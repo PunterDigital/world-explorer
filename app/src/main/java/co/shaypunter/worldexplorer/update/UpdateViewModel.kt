@@ -22,19 +22,32 @@ import kotlinx.coroutines.withContext
 sealed interface UpdateUiState {
     data object Hidden : UpdateUiState
     data class Available(val release: ReleaseInfo) : UpdateUiState
-    data class Downloading(val release: ReleaseInfo, val percent: Int?) : UpdateUiState
+
+    /**
+     * [background]: an automatic download (Wi-Fi only). The chip keeps offering
+     * the update until it's done; [waiting] means nothing has transferred yet.
+     */
+    data class Downloading(
+        val release: ReleaseInfo,
+        val percent: Int?,
+        val background: Boolean = false,
+        val waiting: Boolean = false
+    ) : UpdateUiState
+
     data class Ready(val release: ReleaseInfo, val file: File) : UpdateUiState
 }
 
 /** One-off things the activity has to do. */
 sealed interface UpdateEvent {
+    /** Fallback when an install session can't be used: Android's installer via ACTION_VIEW. */
     data class OpenInstaller(val file: File) : UpdateEvent
     data class Message(val text: String) : UpdateEvent
 }
 
 /**
  * Drives in-app updates: the once-a-day check on launch, the "Check now"
- * button, and the download → verify → install steps behind the chip.
+ * button, automatic downloads, and the download → verify → install steps
+ * behind the chip.
  */
 class UpdateViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -49,7 +62,12 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
 
     private var tracking: Job? = null
 
+    /** Whether the running download opens the installer when it finishes (a tap asked for it). */
+    @Volatile
+    private var openWhenDone = false
+
     val checksEnabled: Boolean get() = prefs.checksEnabled
+    val autoDownloadEnabled: Boolean get() = prefs.autoDownload
     val installedVersion: String get() = updater.installedVersionName
 
     init {
@@ -59,15 +77,17 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
             isNewerVersion(release.version, installedVersion)
         ) {
             // A download from an earlier run: finished, still going, or cancelled.
-            track(pending, release, openWhenDone = false)
+            track(pending, release, openWhenDone = false, background = prefs.downloadBackground)
         } else {
             // Nothing to resume, or already updated: drop any APK left behind.
             prefs.downloadId = null
             prefs.downloadVersion = null
+            prefs.downloadBackground = false
             showCachedRelease()
             viewModelScope.launch(Dispatchers.IO) {
                 pending?.let { updater.cancelDownload(it) }
                 updater.deleteDownloads()
+                withContext(Dispatchers.Main) { maybeAutoDownload() }
             }
         }
     }
@@ -109,36 +129,102 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
         if (_state.value is UpdateUiState.Hidden || _state.value is UpdateUiState.Available) {
             showCachedRelease()
         }
-        if (enabled) checkOnLaunch()
-    }
-
-    /** Chip tapped while it offers the update: download the APK. */
-    fun download() {
-        val current = _state.value as? UpdateUiState.Available ?: return
-        val release = current.release
-        viewModelScope.launch {
-            val id = try {
-                withContext(Dispatchers.IO) { updater.startDownload(release) }
-            } catch (e: Exception) {
-                // DownloadManager disabled, storage unavailable, bad URL…
-                Log.w(TAG, "Couldn't start the download", e)
-                _events.send(UpdateEvent.Message(getApplication<Application>().getString(R.string.update_download_failed)))
-                return@launch
-            }
-            Log.i(TAG, "Downloading v${release.version} (download $id)")
-            prefs.downloadId = id
-            prefs.downloadVersion = release.version
-            track(id, release, openWhenDone = true)
+        if (enabled) {
+            maybeAutoDownload()
+            checkOnLaunch()
         }
     }
 
-    /** Chip tapped once the APK is downloaded: check it again and open the installer. */
+    /** The settings toggle "Download updates automatically". */
+    fun setAutoDownload(enabled: Boolean) {
+        prefs.autoDownload = enabled
+        if (enabled) {
+            // Turning it on is a fresh start for a version that failed before.
+            prefs.autoDownloadSkippedVersion = null
+            maybeAutoDownload()
+        }
+    }
+
+    /** Chip tapped while it offers the update: download the APK (or follow the automatic download). */
+    fun download() {
+        when (val current = _state.value) {
+            is UpdateUiState.Available -> startDownload(current.release, background = false)
+            is UpdateUiState.Downloading -> if (current.background) {
+                when (tapDuringBackgroundDownload(current.waiting)) {
+                    BackgroundTap.RESTART -> {
+                        // Waiting for Wi-Fi: fetch it now on whatever network there is.
+                        prefs.downloadId?.let { updater.cancelDownload(it) }
+                        prefs.downloadId = null
+                        startDownload(current.release, background = false)
+                    }
+                    BackgroundTap.FOLLOW -> {
+                        openWhenDone = true
+                        prefs.downloadBackground = false
+                        _state.value = current.copy(background = false)
+                    }
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    /** Chip tapped once the APK is downloaded: check it again and hand it to the installer. */
     fun install() {
         val ready = _state.value as? UpdateUiState.Ready ?: return
         viewModelScope.launch {
-            if (verifiedOrDiscarded(ready.file, ready.release)) {
-                _events.send(UpdateEvent.OpenInstaller(ready.file))
+            if (verifiedOrDiscarded(ready.file, ready.release)) startInstall(ready.file)
+        }
+    }
+
+    private fun startDownload(release: ReleaseInfo, background: Boolean) {
+        tracking?.cancel()
+        viewModelScope.launch {
+            val id = try {
+                withContext(Dispatchers.IO) { updater.startDownload(release, wifiOnly = background) }
+            } catch (e: Exception) {
+                // DownloadManager disabled, storage unavailable, bad URL…
+                Log.w(TAG, "Couldn't start the download", e)
+                if (background) {
+                    prefs.autoDownloadSkippedVersion = release.version
+                } else {
+                    _events.send(UpdateEvent.Message(getApplication<Application>().getString(R.string.update_download_failed)))
+                }
+                showCachedRelease()
+                return@launch
             }
+            Log.i(TAG, "Downloading v${release.version} (download $id, background=$background)")
+            prefs.downloadId = id
+            prefs.downloadVersion = release.version
+            prefs.downloadBackground = background
+            track(id, release, openWhenDone = !background, background = background)
+        }
+    }
+
+    /** Starts an automatic download when the chip offers an update and the settings allow it. */
+    private fun maybeAutoDownload() {
+        val current = _state.value as? UpdateUiState.Available ?: return
+        if (!shouldAutoDownload(
+                autoDownload = prefs.autoDownload,
+                checksEnabled = prefs.checksEnabled,
+                releaseVersion = current.release.version,
+                installedVersion = installedVersion,
+                skippedVersion = prefs.autoDownloadSkippedVersion
+            )
+        ) return
+        startDownload(current.release, background = true)
+    }
+
+    /**
+     * Hands [file] to Android through an install session (silent on Android
+     * 12+ when World Explorer installed the app before); the answer comes back
+     * to MainActivity. Falls back to the plain installer screen.
+     */
+    private suspend fun startInstall(file: File) {
+        try {
+            withContext(Dispatchers.IO) { updater.installWithSession(file) }
+        } catch (e: IOException) {
+            Log.w(TAG, "Install session failed, opening the installer instead", e)
+            _events.send(UpdateEvent.OpenInstaller(file))
         }
     }
 
@@ -148,6 +234,7 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
         prefs.lastCheckAt = System.currentTimeMillis()
         if (_state.value is UpdateUiState.Hidden || _state.value is UpdateUiState.Available) {
             showCachedRelease()
+            maybeAutoDownload()
         }
         return release
     }
@@ -162,28 +249,39 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
             }
     }
 
-    private fun track(downloadId: Long, release: ReleaseInfo, openWhenDone: Boolean) {
+    private fun track(downloadId: Long, release: ReleaseInfo, openWhenDone: Boolean, background: Boolean) {
         tracking?.cancel()
-        _state.value = UpdateUiState.Downloading(release, null)
+        this.openWhenDone = openWhenDone
+        _state.value = UpdateUiState.Downloading(release, null, background = background, waiting = background)
         tracking = viewModelScope.launch {
             while (true) {
                 when (val progress = withContext(Dispatchers.IO) { updater.progress(downloadId) }) {
                     is DownloadProgress.Running -> {
-                        _state.value = UpdateUiState.Downloading(release, progress.percent)
+                        val shown = _state.value as? UpdateUiState.Downloading
+                        _state.value = UpdateUiState.Downloading(
+                            release,
+                            progress.percent,
+                            background = shown?.background ?: background,
+                            waiting = progress.waiting
+                        )
                         delay(POLL_MS)
                     }
                     is DownloadProgress.Done -> {
                         Log.i(TAG, "Downloaded v${release.version} to ${progress.file}")
+                        prefs.downloadBackground = false
                         if (verifiedOrDiscarded(progress.file, release)) {
                             _state.value = UpdateUiState.Ready(release, progress.file)
-                            if (openWhenDone) _events.send(UpdateEvent.OpenInstaller(progress.file))
+                            if (this@UpdateViewModel.openWhenDone) startInstall(progress.file)
                         }
                         return@launch
                     }
                     is DownloadProgress.Failed -> {
                         Log.w(TAG, "Download failed, reason ${progress.reason}")
+                        val wasBackground = prefs.downloadBackground
                         forgetDownload(downloadId)
-                        _events.send(UpdateEvent.Message(getApplication<Application>().getString(R.string.update_download_failed)))
+                        if (!wasBackground) {
+                            _events.send(UpdateEvent.Message(getApplication<Application>().getString(R.string.update_download_failed)))
+                        }
                         return@launch
                     }
                     DownloadProgress.Missing -> {
@@ -200,6 +298,8 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun verifiedOrDiscarded(file: File, release: ReleaseInfo): Boolean {
         val problem = withContext(Dispatchers.IO) { updater.verify(file, release) } ?: return true
         Log.w(TAG, "Rejected the downloaded APK: $problem")
+        // Never fetch a rejected version again by itself.
+        if (prefs.autoDownload) prefs.autoDownloadSkippedVersion = release.version
         prefs.downloadId?.let { forgetDownload(it) }
         withContext(Dispatchers.IO) { updater.deleteDownloads() }
         showCachedRelease()
@@ -209,9 +309,12 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
         return false
     }
 
+    /** Drops a download that failed, was rejected or was cancelled; an automatic one isn't retried. */
     private fun forgetDownload(downloadId: Long) {
         updater.cancelDownload(downloadId)
+        if (prefs.downloadBackground) prefs.downloadVersion?.let { prefs.autoDownloadSkippedVersion = it }
         if (prefs.downloadId == downloadId) prefs.downloadId = null
+        prefs.downloadBackground = false
         showCachedRelease()
     }
 

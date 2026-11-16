@@ -21,6 +21,22 @@
         android:text="@string/settings_update_checks_summary"
         android:textAppearance="?android:attr/textAppearanceSmall" />
 
+    <androidx.appcompat.widget.SwitchCompat
+        android:id="@+id/switchAutoDownload"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:minHeight="48dp"
+        android:text="@string/settings_auto_download"
+        android:textSize="16sp" />
+
+    <TextView
+        android:id="@+id/autoDownloadSummary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/settings_auto_download_summary"
+        android:textAppearance="?android:attr/textAppearanceSmall" />
+
     <TextView
         android:id="@+id/versionText"
         android:layout_width="match_parent"
