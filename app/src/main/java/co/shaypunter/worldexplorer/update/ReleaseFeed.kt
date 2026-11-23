@@ -1,5 +1,7 @@
 package co.shaypunter.worldexplorer.update
 
+import java.net.URI
+import java.net.URISyntaxException
 import org.json.JSONException
 import org.json.JSONObject
 
@@ -44,6 +46,37 @@ fun pickApkAsset(assets: List<ReleaseAsset>, version: String): ReleaseAsset? {
     return apks.singleOrNull()
 }
 
+/** Where GitHub serves release assets from (the download link, and its redirects). */
+internal val APK_HOSTS = setOf(
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com"
+)
+
+/** Debug builds' fake feed (UpdateE2ETest) serves the APK from the device itself. */
+private val LOOPBACK_HOSTS = setOf("127.0.0.1", "localhost")
+
+/**
+ * Whether the APK link may be downloaded: https on GitHub's own hosts, default
+ * port, no user info (#5617). [allowInsecureUrls] (debug builds) also lets
+ * through http and https on the loopback address, for tests.
+ */
+fun isAllowedApkUrl(url: String, allowInsecureUrls: Boolean = false): Boolean {
+    val uri = try {
+        URI(url)
+    } catch (_: URISyntaxException) {
+        return false
+    }
+    val host = uri.host?.lowercase() ?: return false
+    if (uri.rawUserInfo != null) return false
+    val local = allowInsecureUrls && host in LOOPBACK_HOSTS
+    return when (uri.scheme?.lowercase()) {
+        "https" -> local || (host in APK_HOSTS && (uri.port == -1 || uri.port == 443))
+        "http" -> local
+        else -> false
+    }
+}
+
 /** `sha256:ABC…` → `abc…`; null for any other digest or a malformed one. */
 fun sha256FromDigest(digest: String?): String? {
     if (digest == null) return null
@@ -78,9 +111,7 @@ fun parseLatestRelease(json: String, allowInsecureUrls: Boolean = false): Releas
             )
         }
         val apk = pickApkAsset(assets, version) ?: return null
-        val schemeOk = apk.url.startsWith("https://") ||
-            (allowInsecureUrls && apk.url.startsWith("http://"))
-        if (!schemeOk) return null
+        if (!isAllowedApkUrl(apk.url, allowInsecureUrls)) return null
 
         ReleaseInfo(
             version = version,

@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older. The -wal file holds the newest points until a checkpoint (#5617). -->
 <full-backup-content>
     <include domain="database" path="world-explorer.db" />
+    <include domain="database" path="world-explorer.db-wal" />
+    <include domain="database" path="world-explorer.db-shm" />
 </full-backup-content>

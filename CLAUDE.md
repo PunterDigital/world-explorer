@@ -69,7 +69,11 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   into app-private `filesDir/updates` (`takeDownload`; other apps with storage
   permission can write the external folder on Android 7-10) and only then checks
   it (`rejectDownloadedApk`: our package, the advertised versionName, a higher
-  versionCode, and GitHub's `sha256:` asset digest). A verified copy survives
+  versionCode, and GitHub's `sha256:` asset digest, which is required: a
+  release without one is refused, #5617). The APK link must be https on
+  `github.com` / `objects.githubusercontent.com` /
+  `release-assets.githubusercontent.com` (`isAllowedApkUrl`; debug builds also
+  allow loopback for the fake feed). A verified copy survives
   a relaunch (`downloadedApk` → Ready). The `${applicationId}.updates`
   FileProvider (ACTION_VIEW fallback) exposes only the private folder. The gear button's
   dialog has the "Check for updates" toggle and "Check now".
@@ -174,6 +178,9 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   background location → battery) through `MainActivity.nextPrompt` /
   `continuePrompts()`. Android drops a permission request launched while
   another is showing, so never launch two together.
+- Backups (`data_extraction_rules`, `backup_rules`) hold only the location DB,
+  with its `-wal`/`-shm` files: Room uses WAL, so the newest points can sit in
+  the `-wal` file (#5617). Prefs and update APKs aren't backed up.
 - Room schemas are exported to `app/schemas` (committed). Any entity change
   bumps the `AppDatabase` version, commits the new `schemas/<n>.json`, adds a
   migration to `data/Migrations.kt` and a case in `MigrationTest`, or the app
