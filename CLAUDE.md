@@ -11,7 +11,8 @@ clears circles where you've been. Single `:app` module, package
   targetSdk 37 / compileSdk 37
 - osmdroid (OSM raster tiles), Play Services fused location, Room (KSP)
 - Foreground service `location/LocationTrackingService` does all recording;
-  `MainActivity` toggles it between foreground (1 s) and background (30 s) cadence
+  `MainActivity` toggles it between foreground (1 s) and background (30 s) cadence;
+  in the background it drops to balanced every 3 min while stationary (`TrackingCadence`)
 
 ## Commands
 
@@ -145,6 +146,18 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   synchronously) and `ACTION_STOP_FROM_NOTIFICATION` (the service writes them).
   Don't make the service write prefs on plain `ACTION_STOP`: a quick
   stop-then-start would undo the start.
+- Battery (#5672): no session-long wake lock (it used to hold
+  `WorldExplorer:LocationTracking` with no timeout, all day). Each fix takes
+  `WorldExplorer:RecordFix` with a 10 s timeout while it's written; the
+  location foreground service plus the battery-optimisation exemption keep
+  fixes coming through Doze. `StationaryDetector` (pure, JVM-tested): 5 min
+  within 50 m (plus the fix's accuracy, capped at 200 m) → `STATIONARY_CADENCE`
+  (balanced, 3 min); the first fix further away → back to GPS every 30 s. It
+  goes by the fixes' own times, so `backgroundTrackingSlowsDownWhileStationary`
+  feeds a mock fix "6 minutes later" instead of waiting. The background GPS
+  request has no minimum distance, or the detector would never see fixes while
+  the phone sits still. A locked-screen drive is the real check for gaps (the
+  original Doze bug only showed on a device).
 - Boot resume (`BootReceiver`) needs background location ("Allow all the
   time") on Android 10+: Android 14 throws a SecurityException for a location
   foreground service started from the background without it (reproduced on
