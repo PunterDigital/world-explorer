@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Downloaded update APKs (AppUpdater.UPDATES_DIR), shared with the package installer. -->
+<!-- The app-private copy of a downloaded update APK (AppUpdater.installDir), shared with
+     the package installer. Not the external download folder: other apps can write there. -->
 <paths>
-    <external-files-path name="updates" path="updates/" />
+    <files-path name="updates" path="updates/" />
 </paths>

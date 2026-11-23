@@ -64,10 +64,13 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   reads GitHub's `releases/latest`, caches the release in the `updates` prefs
   and shows the "Update to vX.Y.Z" chip under the % chip. Tapping it explains
   and opens "Install unknown apps" if needed, downloads the APK with
-  DownloadManager into `getExternalFilesDir("updates")`, checks it
-  (`rejectDownloadedApk`: our package, the advertised versionName, a higher
-  versionCode, and GitHub's `sha256:` asset digest) and opens the installer
-  through the `${applicationId}.updates` FileProvider. The gear button's
+  DownloadManager into `getExternalFilesDir("updates")`, copies it straight
+  into app-private `filesDir/updates` (`takeDownload`; other apps with storage
+  permission can write the external folder on Android 7-10) and only then checks
+  it (`rejectDownloadedApk`: our package, the advertised versionName, a higher
+  versionCode, and GitHub's `sha256:` asset digest). A verified copy survives
+  a relaunch (`downloadedApk` → Ready). The `${applicationId}.updates`
+  FileProvider (ACTION_VIEW fallback) exposes only the private folder. The gear button's
   dialog has the "Check for updates" toggle and "Check now".
 - "Download updates automatically" (settings, off by default, greyed out while
   checks are off, #4684): a found release downloads Wi-Fi only
@@ -82,10 +85,18 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   `ACTION_VIEW`, so World Explorer becomes the installer of record. On Android
   12+ the session asks for `USER_ACTION_NOT_REQUIRED`: the first update still
   shows Android's confirmation (installer of record was the browser/adb), later
-  ones install silently after the tap. The answer comes back as a PendingIntent
-  to `MainActivity` (`ACTION_INSTALL_STATUS`, `onNewIntent`), which shows the
-  confirmation intent or a "didn't install" toast. If the session can't be
-  created, it falls back to the old `ACTION_VIEW` installer.
+  ones install silently after the tap. The session hashes the bytes it writes
+  and refuses to commit unless they match the checked digest
+  (`ApkChangedException`, treated as a rejection, never the fallback). The
+  answer comes back as a broadcast PendingIntent to the **non-exported**
+  `InstallStatusReceiver` (`ACTION_INSTALL_STATUS`). It passes a confirmation
+  on only if it's the installer's (`isInstallerConfirmation`: CONFIRM_INSTALL
+  action, resolves to the system app it names; `<queries>` makes that visible),
+  pinned to that component with every `FLAG_GRANT_*`, selector and clip data
+  stripped, through `InstallConfirmations` to MainActivity, which shows it when
+  started. MainActivity is exported (launcher): never act on extras of intents
+  it receives (#5616: any app could make it start an intent of its choice). If
+  the session can't be created, it falls back to the old `ACTION_VIEW` installer.
   Test hooks (debug only): `forceUserActionTestOverride` (always ask, so a test
   can never replace the app under test) and `confirmIntentTestSink`.
 - The update relies on the release workflow's asset name
@@ -111,7 +122,7 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   (Nov 16 the managed device's network did validate, and both download tests
   ran: check the report for skips before assuming either way.)
 - `ActivityScenario` matches lifecycle events by `activity.intent`: never
-  `setIntent()` in `MainActivity` (the install-status handler did once, and
+  `setIntent()` in `MainActivity` (the old install-status handler did once, and
   `close()` then hung waiting for DESTROYED).
 - Manual end-to-end check (card #3355): build a release with
   `versionCode`/`versionName` lowered (e.g. 5 / 0.3.9), install it on a

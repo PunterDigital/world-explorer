@@ -1,10 +1,16 @@
 package co.shaypunter.worldexplorer.update
 
 import android.Manifest
+import android.app.Activity
+import android.app.Instrumentation
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
+import android.provider.Settings
 import android.view.View
 import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
@@ -22,6 +28,7 @@ import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withSubstring
 import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import co.shaypunter.worldexplorer.BuildConfig
 import co.shaypunter.worldexplorer.MainActivity
 import co.shaypunter.worldexplorer.R
@@ -36,6 +43,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
@@ -93,6 +101,7 @@ class UpdateE2ETest {
         AppUpdater.installPermissionTestOverride = null
         AppUpdater.forceUserActionTestOverride = false
         AppUpdater.confirmIntentTestSink = null
+        InstallConfirmations.take()
         AppUpdater(context).abandonOpenSessions()
     }
 
@@ -216,7 +225,7 @@ class UpdateE2ETest {
                 "/download/WorldExplorer-v99.0.0.apk" in server.requests
             }
             waitUntil("the rejected download to be discarded", timeoutMs = 60_000) {
-                prefs.downloadId == null && updatesDir().listFiles().isNullOrEmpty()
+                prefs.downloadId == null && noApkLeft()
             }
             // Back to offering the update.
             waitForChip(scenario, "Update to v99.0.0")
@@ -280,7 +289,7 @@ class UpdateE2ETest {
                 "/download/WorldExplorer-v99.0.0.apk" in server.requests
             }
             waitUntil("the rejected download to be discarded", timeoutMs = 60_000) {
-                prefs.downloadId == null && updatesDir().listFiles().isNullOrEmpty()
+                prefs.downloadId == null && noApkLeft()
             }
             assertEquals("99.0.0", prefs.autoDownloadSkippedVersion)
             waitForChip(scenario, "Update to v99.0.0")
@@ -303,17 +312,110 @@ class UpdateE2ETest {
         File(context.applicationInfo.sourceDir).copyTo(apk, overwrite = true)
 
         launch {
-            AppUpdater(context).installWithSession(apk)
-            // The session reports back to MainActivity, which would show this.
+            AppUpdater(context).installWithSession(apk, AppUpdater.sha256(apk))
+            // The session reports back to InstallStatusReceiver, which checks the
+            // confirmation and hands it to MainActivity, which would show this.
             waitUntil("the installer's confirmation", timeoutMs = 30_000) { confirmations.isNotEmpty() }
-            assertNotNull(confirmations.first().action)
+            val confirm = confirmations.first()
+            assertNotNull(confirm.action)
+            // Pinned to the system installer it resolved to, with no URI grants.
+            val target = confirm.component
+            assertNotNull(target)
+            assertTrue(target!!.packageName != pkg)
+            assertEquals(0, confirm.flags and GRANT_FLAGS)
+            assertNull(confirm.selector)
             assertEquals(1, context.packageManager.packageInstaller.mySessions.size)
         }
     }
 
     @Test
+    fun installSessionRefusesAnApkThatChangedAfterTheCheck() {
+        AppUpdater.forceUserActionTestOverride = true
+        val confirmations = java.util.concurrent.CopyOnWriteArrayList<Intent>()
+        AppUpdater.confirmIntentTestSink = { confirmations += it }
+        val apk = File(context.cacheDir, "WorldExplorer-v99.0.0.apk")
+        File(context.applicationInfo.sourceDir).copyTo(apk, overwrite = true)
+        // What a swap between the check and the copy into the session looks like.
+        val checked = "0".repeat(64)
+
+        launch {
+            try {
+                AppUpdater(context).installWithSession(apk, checked)
+                fail("a changed APK must not be committed")
+            } catch (_: ApkChangedException) {
+            }
+            assertTrue(context.packageManager.packageInstaller.mySessions.isEmpty())
+            Thread.sleep(2_000)
+            assertTrue(confirmations.isEmpty())
+        }
+    }
+
+    @Test
+    fun installStatusReceiverIsNotExported() {
+        val info = context.packageManager.getReceiverInfo(
+            ComponentName(context, InstallStatusReceiver::class.java), 0
+        )
+        assertFalse(info.exported)
+    }
+
+    @Test
+    fun installStatusFromAnotherAppStartsNothing() {
+        val confirmations = java.util.concurrent.CopyOnWriteArrayList<Intent>()
+        AppUpdater.confirmIntentTestSink = { confirmations += it }
+        // What another app could send to the exported MainActivity (#5616): a
+        // "confirmation" that would hand it lasting access to the update folder.
+        val smuggled = Intent(Settings.ACTION_SETTINGS)
+            .setData(android.net.Uri.parse("content://$pkg.updates/updates/WorldExplorer-v99.0.0.apk"))
+            .addFlags(GRANT_FLAGS)
+        val forged = Intent(context, MainActivity::class.java)
+            .setAction(AppUpdater.ACTION_INSTALL_STATUS)
+            .putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_PENDING_USER_ACTION)
+            .putExtra(Intent.EXTRA_INTENT, smuggled)
+
+        val started = java.util.concurrent.CopyOnWriteArrayList<Intent>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val monitor = object : Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
+                started += intent
+                // Block the smuggled intent if it ever gets started; let the rest through.
+                return if (intent.action == Settings.ACTION_SETTINGS) {
+                    Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null)
+                } else {
+                    null
+                }
+            }
+        }
+        instrumentation.addMonitor(monitor)
+        try {
+            // Cold start with the forged intent, then again through onNewIntent.
+            ActivityScenario.launch<MainActivity>(forged).use { scenario ->
+                Thread.sleep(1_500)
+                scenario.onActivity {
+                    it.startActivity(Intent(forged).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP))
+                }
+                Thread.sleep(1_500)
+                // Straight at the receiver (only our own process can reach it): a
+                // confirmation that isn't the package installer's is dropped.
+                context.sendBroadcast(
+                    Intent(context, InstallStatusReceiver::class.java)
+                        .setAction(AppUpdater.ACTION_INSTALL_STATUS)
+                        .putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_PENDING_USER_ACTION)
+                        .putExtra(Intent.EXTRA_INTENT, smuggled)
+                )
+                Thread.sleep(2_000)
+            }
+        } finally {
+            instrumentation.removeMonitor(monitor)
+        }
+        assertTrue("smuggled intent started: $started", started.none { it.action == Settings.ACTION_SETTINGS })
+        assertTrue("confirmation passed on: $confirmations", confirmations.isEmpty())
+        assertNull(InstallConfirmations.pending.value)
+    }
+
+    @Test
     fun installerGetsTheApkThroughTheFileProvider() {
-        val dir = updatesDir()
+        // The app-private copy, never the external download folder.
+        val dir = AppUpdater(context).installDir
         dir.mkdirs()
         val apk = File(dir, "WorldExplorer-v99.0.0.apk").apply { writeBytes(byteArrayOf(1, 2, 3)) }
 
@@ -327,7 +429,10 @@ class UpdateE2ETest {
         assertEquals(listOf<Byte>(1, 2, 3), bytes.toList())
     }
 
-    private fun updatesDir() = File(context.getExternalFilesDir(null), AppUpdater.UPDATES_DIR)
+    /** Neither the download folder nor the app-private copy holds an APK. */
+    private fun noApkLeft(): Boolean =
+        File(context.getExternalFilesDir(null), AppUpdater.UPDATES_DIR).listFiles().isNullOrEmpty() &&
+            AppUpdater(context).installDir.listFiles().isNullOrEmpty()
 
     /**
      * Stands in for "Install unknown apps". Not the real app op: revoking it
@@ -343,6 +448,13 @@ class UpdateE2ETest {
      */
     private fun tapChip(scenario: ActivityScenario<MainActivity>) {
         scenario.onActivity { it.findViewById<View>(R.id.btnUpdate).performClick() }
+    }
+
+    private companion object {
+        const val GRANT_FLAGS = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+            Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+            Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
     }
 
     private fun launch(block: (ActivityScenario<MainActivity>) -> Unit) {
