@@ -122,22 +122,15 @@ class LocationTrackingService : LifecycleService() {
         timestamp: Long,
         dedup: Float
     ) {
-        if (prevLat != null && prevLon != null) {
-            val gap = GapFiller.between(prevLat, prevLon, prevTs, curLat, curLon, timestamp)
-            for (p in gap) {
-                repository.recordIfNew(
-                    latitude = p.latitude,
-                    longitude = p.longitude,
-                    radiusMeters = UNLOCK_RADIUS_METERS,
-                    timestamp = timestamp,
-                    dedupRadiusMeters = dedup.toDouble()
-                )
-            }
+        val gap = if (prevLat != null && prevLon != null) {
+            GapFiller.between(prevLat, prevLon, prevTs, curLat, curLon, timestamp)
+        } else {
+            emptyList()
         }
-
-        repository.recordIfNew(
-            latitude = curLat,
-            longitude = curLon,
+        // The gap's points and the fix itself go in as one transaction, so
+        // the map is told about the table change once per fix (#5676).
+        repository.recordAllIfNew(
+            positions = gap.map { it.latitude to it.longitude } + (curLat to curLon),
             radiusMeters = UNLOCK_RADIUS_METERS,
             timestamp = timestamp,
             dedupRadiusMeters = dedup.toDouble()
@@ -147,7 +140,7 @@ class LocationTrackingService : LifecycleService() {
     override fun onCreate() {
         super.onCreate()
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
-        repository = ExploredRepository(AppDatabase.get(this).exploredPointDao())
+        repository = ExploredRepository(AppDatabase.get(this))
         prefs = TrackingPreferences(this)
         prefs.lastFix?.let { fix ->
             lastFixLat = fix.latitude

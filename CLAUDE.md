@@ -173,7 +173,22 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
 - Trail smoothing (`data/TrailSmoother`) runs on every app open but only
   touches points after the `smoothedUpToId` watermark in prefs, and never
   across trip boundaries (> 5 min gap). Projection isn't idempotent on curves,
-  so never re-smooth old points.
+  so never re-smooth old points. It reads only the points after the watermark
+  plus the `WINDOW_RADIUS` before it (`getSmoothingWindow`, which gives the
+  same result as the whole history: `TrailSmootherTest` checks every watermark).
+- The UI's point list (`data/PointsFeed`, #5676) reads the table once per app
+  open, then only the rows after the last id it has (`observeMaxId` +
+  `getAfter`), and appends them. Smoothing, the only in-place update, runs in
+  `MainViewModel` before that first read. Anything new that changes existing
+  rows while the app is open won't reach the map unless the feed re-reads.
+  The service writes a fix and its gap fill in one transaction
+  (`recordAllIfNew`): one table invalidation per fix, not one per point.
+- `ExploredRepositoryTest` counts statements with a Room `QueryCallback`.
+  Room's own insert transactions nest inside an outer one, and the
+  invalidation tracker's refresh (`room_table_modification_log`) runs a
+  transaction of its own: count outermost transactions that touch
+  `explored_points`. Seed big tables with `insertAll`: 10,000 separate
+  suspend inserts took over a minute on the managed device.
 - First-launch prompts run one at a time (location → notifications →
   background location → battery) through `MainActivity.nextPrompt` /
   `continuePrompts()`. Android drops a permission request launched while

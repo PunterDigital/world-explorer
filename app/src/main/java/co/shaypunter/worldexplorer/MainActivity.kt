@@ -133,9 +133,6 @@ class MainActivity : AppCompatActivity() {
         setupControls()
         observeState()
         updateTrackingButton()
-        // One-shot cleanup of GPS-noise jitter in the existing trail. Runs
-        // off the IO dispatcher and re-emits via the points Flow when done.
-        viewModel.smoothTrailOnce()
         // At most once a day (and not at all when turned off in settings).
         if (savedInstanceState == null) {
             updateViewModel.checkOnLaunch()
