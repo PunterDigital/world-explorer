@@ -19,6 +19,16 @@
         android:maxSdkVersion="28"
         tools:ignore="ScopedStorage" />
 
+    <!-- So the install-status receiver can check a confirmation opens the package installer. -->
+    <queries>
+        <intent>
+            <action android:name="android.content.pm.action.CONFIRM_INSTALL" />
+        </intent>
+        <intent>
+            <action android:name="android.content.pm.action.CONFIRM_PERMISSIONS" />
+        </intent>
+    </queries>
+
     <uses-feature
         android:name="android.hardware.location.gps"
         android:required="false" />
@@ -61,6 +71,12 @@
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
+
+        <!-- Install-session answers (AppUpdater.installWithSession). Not exported: only our
+             own PendingIntent reaches it, never another app (#5616). -->
+        <receiver
+            android:name=".update.InstallStatusReceiver"
+            android:exported="false" />
 
         <!-- Shares downloaded update APKs with the package installer (AppUpdater). -->
         <provider

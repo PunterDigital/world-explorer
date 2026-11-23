@@ -13,12 +13,12 @@ import androidx.core.content.FileProvider
 import androidx.core.content.pm.PackageInfoCompat
 import androidx.core.net.toUri
 import co.shaypunter.worldexplorer.BuildConfig
-import co.shaypunter.worldexplorer.MainActivity
 import co.shaypunter.worldexplorer.R
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.DigestInputStream
 import java.security.MessageDigest
 
 /** Where the release feed lives. Only debug builds (tests) can point it elsewhere. */
@@ -49,8 +49,8 @@ sealed interface DownloadProgress {
 
 /**
  * The Android side of in-app updates: asks GitHub for the latest release,
- * downloads its APK with DownloadManager into the app's own external files
- * folder, checks it, and builds the intent that opens the package installer.
+ * downloads its APK with DownloadManager, copies it into app-private storage,
+ * checks it, and installs it (session, or the package installer as a fallback).
  * Decisions (versions, which asset, whether to check) are the pure functions
  * next to this file.
  */
@@ -92,8 +92,17 @@ class AppUpdater(context: Context) {
         }
     }
 
-    private val updatesDir: File?
+    /**
+     * Where DownloadManager puts the APK. On Android 7-10 other apps with
+     * storage permission can write here, so nothing is verified or installed
+     * from this folder: [takeDownload] copies the APK to [installDir] first.
+     */
+    private val downloadDir: File?
         get() = context.getExternalFilesDir(UPDATES_DIR)
+
+    /** App-private copy of the downloaded APK: verified, then installed from here. */
+    val installDir: File
+        get() = File(context.filesDir, UPDATES_DIR)
 
     /**
      * Starts downloading [release]'s APK and returns the DownloadManager id.
@@ -102,7 +111,7 @@ class AppUpdater(context: Context) {
     fun startDownload(release: ReleaseInfo, wifiOnly: Boolean = false): Long {
         val name = fileNameFor(release)
         // DownloadManager renames instead of overwriting (…-1.apk), so clear the way.
-        updatesDir?.listFiles()?.forEach { it.delete() }
+        deleteDownloads()
         val request = DownloadManager.Request(release.apkUrl.toUri())
             .setTitle(context.getString(R.string.update_download_title, release.version))
             .setMimeType(APK_CONTENT_TYPE)
@@ -143,6 +152,30 @@ class AppUpdater(context: Context) {
         downloads.remove(downloadId)
     }
 
+    /**
+     * Copies a finished download into [installDir] (app-private) and drops
+     * DownloadManager's file and entry. Returns the private copy. Blocking.
+     */
+    @Throws(IOException::class)
+    fun takeDownload(downloadId: Long, downloaded: File, release: ReleaseInfo): File {
+        val dir = installDir
+        dir.mkdirs()
+        dir.listFiles()?.forEach { it.delete() }
+        val target = File(dir, fileNameFor(release))
+        val partial = File(dir, "${target.name}.part")
+        downloaded.inputStream().use { input -> partial.outputStream().use { input.copyTo(it) } }
+        if (!partial.renameTo(target)) {
+            partial.delete()
+            throw IOException("Couldn't move the download into place")
+        }
+        downloads.remove(downloadId)
+        return target
+    }
+
+    /** The private copy of [release]'s APK taken earlier, if it's still there. */
+    fun downloadedApk(release: ReleaseInfo): File? =
+        File(installDir, fileNameFor(release)).takeIf { it.isFile }
+
     /** Null when [file] is the APK [release] promised, else why not. Blocking. */
     fun verify(file: File, release: ReleaseInfo): String? {
         val info = try {
@@ -161,7 +194,7 @@ class AppUpdater(context: Context) {
         return rejectDownloadedApk(facts, release, context.packageName, installedVersionCode)
     }
 
-    /** Opens Android's package installer on [file] (in [updatesDir], shared via FileProvider). */
+    /** Opens Android's package installer on [file] (in [installDir], shared via FileProvider). */
     fun installIntent(file: File): Intent {
         val uri: Uri = FileProvider.getUriForFile(context, "${context.packageName}.updates", file)
         return Intent(Intent.ACTION_VIEW)
@@ -172,12 +205,15 @@ class AppUpdater(context: Context) {
     /**
      * Installs [file] through a PackageInstaller session, which makes World
      * Explorer the installer of record. Android answers through a PendingIntent
-     * to [MainActivity] ([ACTION_INSTALL_STATUS]): usually a confirmation to
-     * show, or nothing at all on Android 12+ once World Explorer installed the
-     * app before (the process is replaced). Blocking: copies the APK.
+     * to the non-exported [InstallStatusReceiver] ([ACTION_INSTALL_STATUS]):
+     * usually a confirmation to show, or nothing at all on Android 12+ once
+     * World Explorer installed the app before (the process is replaced).
+     * The bytes written into the session are hashed on the way and must match
+     * [expectedSha256] before the session is committed, else
+     * [ApkChangedException]. Blocking: copies the APK.
      */
-    @Throws(IOException::class)
-    fun installWithSession(file: File) {
+    @Throws(IOException::class, ApkChangedException::class)
+    fun installWithSession(file: File, expectedSha256: String) {
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
             setAppPackageName(context.packageName)
@@ -197,22 +233,30 @@ class AppUpdater(context: Context) {
         }
         try {
             installer.openSession(sessionId).use { session ->
+                val digest = MessageDigest.getInstance("SHA-256")
                 session.openWrite("base.apk", 0, file.length()).use { out ->
-                    file.inputStream().use { it.copyTo(out) }
+                    DigestInputStream(file.inputStream(), digest).use { it.copyTo(out) }
                     session.fsync(out)
                 }
-                val status = Intent(context, MainActivity::class.java)
+                val written = digest.digest().toHex()
+                if (!written.equals(expectedSha256, ignoreCase = true)) {
+                    throw ApkChangedException("APK changed after it was checked")
+                }
+                val status = Intent(context, InstallStatusReceiver::class.java)
                     .setAction(ACTION_INSTALL_STATUS)
-                    .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    .setPackage(context.packageName)
                 // Mutable: the installer fills in the status and the confirmation intent.
                 val flags = PendingIntent.FLAG_UPDATE_CURRENT or
                     (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0)
-                val callback = PendingIntent.getActivity(context, sessionId, status, flags)
+                val callback = PendingIntent.getBroadcast(context, sessionId, status, flags)
                 session.commit(callback.intentSender)
             }
         } catch (e: Exception) {
             runCatching { installer.abandonSession(sessionId) }
-            throw if (e is IOException) e else IOException("Install session failed", e)
+            throw when (e) {
+                is IOException, is ApkChangedException -> e
+                else -> IOException("Install session failed", e)
+            }
         }
     }
 
@@ -252,7 +296,8 @@ class AppUpdater(context: Context) {
 
     /** Deletes downloaded APKs (after an update, or a rejected download). */
     fun deleteDownloads() {
-        updatesDir?.listFiles()?.forEach { it.delete() }
+        downloadDir?.listFiles()?.forEach { it.delete() }
+        installDir.listFiles()?.forEach { it.delete() }
     }
 
     companion object {
@@ -297,7 +342,12 @@ class AppUpdater(context: Context) {
                     digest.update(buffer, 0, read)
                 }
             }
-            return digest.digest().joinToString("") { "%02x".format(it) }
+            return digest.digest().toHex()
         }
+
+        private fun ByteArray.toHex() = joinToString("") { "%02x".format(it) }
     }
 }
+
+/** The APK streamed into an install session isn't the one that was verified. */
+class ApkChangedException(message: String) : Exception(message)

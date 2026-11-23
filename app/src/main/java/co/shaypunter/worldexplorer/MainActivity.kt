@@ -3,7 +3,6 @@ package co.shaypunter.worldexplorer
 import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
@@ -11,7 +10,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
-import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
@@ -22,7 +20,6 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.core.content.IntentCompat
 import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -37,8 +34,7 @@ import co.shaypunter.worldexplorer.databinding.DialogSettingsBinding
 import co.shaypunter.worldexplorer.location.LocationTrackingService
 import co.shaypunter.worldexplorer.ui.FogOverlay
 import co.shaypunter.worldexplorer.update.AppUpdater
-import co.shaypunter.worldexplorer.update.InstallStatusAction
-import co.shaypunter.worldexplorer.update.installStatusAction
+import co.shaypunter.worldexplorer.update.InstallConfirmations
 import co.shaypunter.worldexplorer.update.UpdateEvent
 import co.shaypunter.worldexplorer.update.UpdateUiState
 import co.shaypunter.worldexplorer.update.UpdateViewModel
@@ -143,8 +139,6 @@ class MainActivity : AppCompatActivity() {
         // At most once a day (and not at all when turned off in settings).
         if (savedInstanceState == null) {
             updateViewModel.checkOnLaunch()
-            // Started by an install session's answer after the activity was gone.
-            handleInstallStatus(intent)
         }
 
         // After a recreation (e.g. a font-size change) a request may still be
@@ -343,6 +337,11 @@ class MainActivity : AppCompatActivity() {
                 launch { updateViewModel.state.collect(::showUpdateState) }
                 launch { updateViewModel.events.collect(::onUpdateEvent) }
                 launch {
+                    InstallConfirmations.pending.collect { waiting ->
+                        if (waiting != null) InstallConfirmations.take()?.let(::showInstallConfirmation)
+                    }
+                }
+                launch {
                     viewModel.percentExplored.collectLatest { pct ->
                         val formatted = String.format(Locale.US, "%08.5f%%", pct)
                         binding.statsText.text =
@@ -370,42 +369,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        handleInstallStatus(intent)
-    }
-
     /**
-     * Android's answer to an install session (AppUpdater.installWithSession):
-     * show its confirmation, or say why it failed. On success the app is
-     * being replaced, so there's nothing to do.
+     * The installer's confirmation for an install session, checked and with its
+     * URI grants stripped by InstallStatusReceiver. MainActivity no longer
+     * acts on ACTION_INSTALL_STATUS intents itself: it's exported, so any app
+     * could send one (#5616).
      */
-    private fun handleInstallStatus(intent: Intent?) {
-        // onCreate only passes the launch intent when there's no saved state, so a
-        // configuration change doesn't show the same answer twice.
-        if (intent?.action != AppUpdater.ACTION_INSTALL_STATUS) return
-        val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
-        when (installStatusAction(status)) {
-            InstallStatusAction.CONFIRM -> {
-                val confirm = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java)
-                    ?: return
-                val sink = AppUpdater.confirmIntentTestSink
-                if (BuildConfig.DEBUG && sink != null) {
-                    sink(confirm)
-                    return
-                }
-                try {
-                    startActivity(confirm)
-                } catch (_: ActivityNotFoundException) {
-                    Toast.makeText(this, R.string.update_no_installer, Toast.LENGTH_LONG).show()
-                }
-            }
-            InstallStatusAction.FAILED -> {
-                val detail = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
-                Log.w("AppUpdate", "Install failed: status $status, $detail")
-                Toast.makeText(this, R.string.update_install_failed, Toast.LENGTH_LONG).show()
-            }
-            InstallStatusAction.INSTALLED, InstallStatusAction.CANCELLED -> Unit
+    private fun showInstallConfirmation(confirm: Intent) {
+        val sink = AppUpdater.confirmIntentTestSink
+        if (BuildConfig.DEBUG && sink != null) {
+            sink(confirm)
+            return
+        }
+        try {
+            startActivity(confirm)
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(this, R.string.update_no_installer, Toast.LENGTH_LONG).show()
         }
     }
 

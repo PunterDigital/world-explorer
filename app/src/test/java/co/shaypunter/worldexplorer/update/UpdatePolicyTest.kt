@@ -64,4 +64,25 @@ class UpdatePolicyTest {
     fun checksumComparisonIgnoresCase() {
         assertNull(rejectDownloadedApk(good.copy(sha256 = sha.uppercase()), release, pkg, 6))
     }
+
+    @Test
+    fun onlyTheSystemInstallersConfirmationIsStarted() {
+        val installer = "com.google.android.packageinstaller"
+        val ok = { action: String?, target: String?, resolved: String?, system: Boolean ->
+            isInstallerConfirmation(action, target, resolved, system, ourPackage = "co.shaypunter.worldexplorer")
+        }
+        assertTrue(ok("android.content.pm.action.CONFIRM_INSTALL", installer, installer, true))
+        assertTrue(ok("android.content.pm.action.CONFIRM_PERMISSIONS", installer, installer, true))
+        // Anything else an app could smuggle in as EXTRA_INTENT.
+        assertFalse(ok("android.intent.action.VIEW", installer, installer, true))
+        assertFalse(ok("android.settings.SETTINGS", "com.android.settings", "com.android.settings", true))
+        assertFalse(ok(null, installer, installer, true))
+        // Not a system app, or not the package it names.
+        assertFalse(ok("android.content.pm.action.CONFIRM_INSTALL", "com.evil", "com.evil", false))
+        assertFalse(ok("android.content.pm.action.CONFIRM_INSTALL", installer, "com.evil", true))
+        assertFalse(ok("android.content.pm.action.CONFIRM_INSTALL", null, installer, true))
+        assertFalse(ok("android.content.pm.action.CONFIRM_INSTALL", installer, null, true))
+        // Never our own app (e.g. an intent aimed back at an activity of ours).
+        assertFalse(ok("android.content.pm.action.CONFIRM_INSTALL", "co.shaypunter.worldexplorer", "co.shaypunter.worldexplorer", true))
+    }
 }

@@ -73,11 +73,14 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
     init {
         val release = prefs.latestRelease
         val pending = prefs.downloadId
-        if (pending != null && release != null && prefs.downloadVersion == release.version &&
-            isNewerVersion(release.version, installedVersion)
-        ) {
+        val newer = release != null && isNewerVersion(release.version, installedVersion)
+        val taken = if (pending == null && newer) updater.downloadedApk(release!!) else null
+        if (pending != null && newer && prefs.downloadVersion == release!!.version) {
             // A download from an earlier run: finished, still going, or cancelled.
             track(pending, release, openWhenDone = false, background = prefs.downloadBackground)
+        } else if (taken != null) {
+            // Downloaded and checked in an earlier run; checked again before installing.
+            _state.value = UpdateUiState.Ready(release!!, taken)
         } else {
             // Nothing to resume, or already updated: drop any APK left behind.
             prefs.downloadId = null
@@ -172,7 +175,7 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
     fun install() {
         val ready = _state.value as? UpdateUiState.Ready ?: return
         viewModelScope.launch {
-            if (verifiedOrDiscarded(ready.file, ready.release)) startInstall(ready.file)
+            if (verifiedOrDiscarded(ready.file, ready.release)) startInstall(ready.file, ready.release)
         }
     }
 
@@ -217,11 +220,18 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * Hands [file] to Android through an install session (silent on Android
      * 12+ when World Explorer installed the app before); the answer comes back
-     * to MainActivity. Falls back to the plain installer screen.
+     * to InstallStatusReceiver. Falls back to the plain installer screen.
+     * [file] is the app-private copy, just verified against [release].
      */
-    private suspend fun startInstall(file: File) {
+    private suspend fun startInstall(file: File, release: ReleaseInfo) {
         try {
-            withContext(Dispatchers.IO) { updater.installWithSession(file) }
+            withContext(Dispatchers.IO) {
+                // The session hashes what it writes and refuses anything but the checked APK.
+                val expected = release.sha256 ?: AppUpdater.sha256(file)
+                updater.installWithSession(file, expected)
+            }
+        } catch (e: ApkChangedException) {
+            discard(release, e.message ?: "APK changed after it was checked")
         } catch (e: IOException) {
             Log.w(TAG, "Install session failed, opening the installer instead", e)
             _events.send(UpdateEvent.OpenInstaller(file))
@@ -268,10 +278,25 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     is DownloadProgress.Done -> {
                         Log.i(TAG, "Downloaded v${release.version} to ${progress.file}")
+                        // Into app-private storage before anything looks at it: other
+                        // apps can write to the download folder on Android 7-10.
+                        val file = try {
+                            withContext(Dispatchers.IO) { updater.takeDownload(downloadId, progress.file, release) }
+                        } catch (e: IOException) {
+                            Log.w(TAG, "Couldn't copy the download", e)
+                            val wasBackground = prefs.downloadBackground
+                            forgetDownload(downloadId)
+                            withContext(Dispatchers.IO) { updater.deleteDownloads() }
+                            if (!wasBackground) {
+                                _events.send(UpdateEvent.Message(getApplication<Application>().getString(R.string.update_download_failed)))
+                            }
+                            return@launch
+                        }
+                        if (prefs.downloadId == downloadId) prefs.downloadId = null
                         prefs.downloadBackground = false
-                        if (verifiedOrDiscarded(progress.file, release)) {
-                            _state.value = UpdateUiState.Ready(release, progress.file)
-                            if (this@UpdateViewModel.openWhenDone) startInstall(progress.file)
+                        if (verifiedOrDiscarded(file, release)) {
+                            _state.value = UpdateUiState.Ready(release, file)
+                            if (this@UpdateViewModel.openWhenDone) startInstall(file, release)
                         }
                         return@launch
                     }
@@ -297,6 +322,12 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
     /** True when [file] is the promised APK; otherwise deletes it and says why. */
     private suspend fun verifiedOrDiscarded(file: File, release: ReleaseInfo): Boolean {
         val problem = withContext(Dispatchers.IO) { updater.verify(file, release) } ?: return true
+        discard(release, problem)
+        return false
+    }
+
+    /** Deletes a rejected download and says why; a rejected version isn't fetched again by itself. */
+    private suspend fun discard(release: ReleaseInfo, problem: String) {
         Log.w(TAG, "Rejected the downloaded APK: $problem")
         // Never fetch a rejected version again by itself.
         if (prefs.autoDownload) prefs.autoDownloadSkippedVersion = release.version
@@ -306,7 +337,6 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
         _events.send(
             UpdateEvent.Message(getApplication<Application>().getString(R.string.update_rejected, problem))
         )
-        return false
     }
 
     /** Drops a download that failed, was rejected or was cancelled; an automatic one isn't retried. */

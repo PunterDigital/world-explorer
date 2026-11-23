@@ -85,6 +85,30 @@ fun installStatusAction(status: Int): InstallStatusAction = when (status) {
     else -> InstallStatusAction.FAILED
 }
 
+/**
+ * Whether a session's confirmation intent may be started: it's Android's
+ * "confirm install" action (CONFIRM_PERMISSIONS before Android 10), aimed at a
+ * package that is the one it resolves to, and that package is a system app
+ * other than ours (#5616).
+ */
+fun isInstallerConfirmation(
+    action: String?,
+    targetPackage: String?,
+    resolvedPackage: String?,
+    resolvedIsSystemApp: Boolean,
+    ourPackage: String
+): Boolean =
+    action in CONFIRM_ACTIONS &&
+        targetPackage != null &&
+        resolvedPackage == targetPackage &&
+        resolvedPackage != ourPackage &&
+        resolvedIsSystemApp
+
+internal val CONFIRM_ACTIONS = setOf(
+    "android.content.pm.action.CONFIRM_INSTALL",
+    "android.content.pm.action.CONFIRM_PERMISSIONS"
+)
+
 // android.content.pm.PackageInstaller constants.
 internal const val STATUS_PENDING_USER_ACTION = -1
 internal const val STATUS_SUCCESS = 0
