@@ -1,7 +1,10 @@
 package co.shaypunter.worldexplorer.update
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReleaseFeedTest {
@@ -113,6 +116,38 @@ class ReleaseFeedTest {
         assertNull(parseLatestRelease(http))
         assertEquals("http://127.0.0.1:8080/WorldExplorer-v0.5.0.apk", parseLatestRelease(http, allowInsecureUrls = true)?.apkUrl)
         assertNull(parseLatestRelease(feed(url = "file:///sdcard/evil.apk"), allowInsecureUrls = true))
+    }
+
+    @Test
+    fun apkLinkMustBeOnGitHub() {
+        assertNull(parseLatestRelease(feed(url = "https://evil.example/WorldExplorer-v0.5.0.apk")))
+        assertNotNull(parseLatestRelease(feed()))
+    }
+
+    @Test
+    fun apkHostIsPinned() {
+        val path = "/PunterDigital/world-explorer/releases/download/v0.5.0/WorldExplorer-v0.5.0.apk"
+        assertTrue(isAllowedApkUrl("https://github.com$path"))
+        assertTrue(isAllowedApkUrl("https://GitHub.com$path"))
+        assertTrue(isAllowedApkUrl("https://github.com:443$path"))
+        assertTrue(isAllowedApkUrl("https://objects.githubusercontent.com/github-production-release-asset/1"))
+        assertTrue(isAllowedApkUrl("https://release-assets.githubusercontent.com/github-production-release-asset/1"))
+
+        assertFalse(isAllowedApkUrl("http://github.com$path"))
+        assertFalse(isAllowedApkUrl("https://github.com.evil.example$path"))
+        assertFalse(isAllowedApkUrl("https://evilgithub.com$path"))
+        assertFalse(isAllowedApkUrl("https://evil.example@github.com$path"))
+        assertFalse(isAllowedApkUrl("https://github.com:8443$path"))
+        assertFalse(isAllowedApkUrl("https://raw.githubusercontent.com/x/y.apk"))
+        assertFalse(isAllowedApkUrl("ftp://github.com$path"))
+        assertFalse(isAllowedApkUrl("not a url"))
+        assertFalse(isAllowedApkUrl(""))
+        // Loopback only for debug builds' fake feed, and nothing else then either.
+        assertFalse(isAllowedApkUrl("http://127.0.0.1:8080/a.apk"))
+        assertTrue(isAllowedApkUrl("http://127.0.0.1:8080/a.apk", allowInsecureUrls = true))
+        assertTrue(isAllowedApkUrl("http://localhost:8080/a.apk", allowInsecureUrls = true))
+        assertFalse(isAllowedApkUrl("http://10.0.2.2:8080/a.apk", allowInsecureUrls = true))
+        assertFalse(isAllowedApkUrl("https://evil.example/a.apk", allowInsecureUrls = true))
     }
 
     @Test

@@ -39,8 +39,6 @@ class UpdatePolicyTest {
     @Test
     fun acceptsTheAdvertisedApk() {
         assertNull(rejectDownloadedApk(good, release, pkg, installedVersionCode = 6))
-        // No published digest: the other checks still apply.
-        assertNull(rejectDownloadedApk(good.copy(sha256 = "b".repeat(64)), release.copy(sha256 = null), pkg, 6))
         assertNull(rejectDownloadedApk(good.copy(versionName = "0.5"), release, pkg, 6))
     }
 
@@ -58,6 +56,14 @@ class UpdatePolicyTest {
         // Same or lower versionCode: Android would refuse a downgrade anyway.
         assertNotNull(rejectDownloadedApk(good.copy(versionCode = 6), release, pkg, 6))
         assertNotNull(rejectDownloadedApk(good.copy(versionCode = 5), release, pkg, 6))
+    }
+
+    @Test
+    fun refusesAReleaseWithoutAChecksum() {
+        assertEquals(
+            "the release has no checksum",
+            rejectDownloadedApk(good, release.copy(sha256 = null), pkg, installedVersionCode = 6)
+        )
     }
 
     @Test
