@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The location DB with its write-ahead log: Room uses WAL, and the newest points stay in
+     the -wal file until a checkpoint, so the .db alone can miss them (#5617). -->
 <data-extraction-rules>
     <cloud-backup>
         <include domain="database" path="world-explorer.db" />
+        <include domain="database" path="world-explorer.db-wal" />
+        <include domain="database" path="world-explorer.db-shm" />
     </cloud-backup>
     <device-transfer>
         <include domain="database" path="world-explorer.db" />
+        <include domain="database" path="world-explorer.db-wal" />
+        <include domain="database" path="world-explorer.db-shm" />
     </device-transfer>
 </data-extraction-rules>

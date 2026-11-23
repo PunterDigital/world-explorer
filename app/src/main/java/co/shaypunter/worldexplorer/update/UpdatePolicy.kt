@@ -23,9 +23,11 @@ data class ApkFacts(
 
 /**
  * Why a downloaded APK must not be handed to the installer, or null when it is
- * the release we asked for: our package, the advertised version, newer than
- * what's installed, and (when GitHub published one) the advertised checksum.
- * Android itself refuses an APK signed with a different key.
+ * the release we asked for: our package, the advertised checksum, the
+ * advertised version, and newer than what's installed. A release without a
+ * checksum is refused (#5617): every release asset has GitHub's `sha256:`
+ * digest, so a missing one means something is off. Android itself refuses an
+ * APK signed with a different key.
  */
 fun rejectDownloadedApk(
     facts: ApkFacts?,
@@ -35,8 +37,8 @@ fun rejectDownloadedApk(
 ): String? = when {
     facts == null -> "not a valid APK"
     facts.packageName != ourPackage -> "APK is for ${facts.packageName}, not $ourPackage"
-    release.sha256 != null && !facts.sha256.equals(release.sha256, ignoreCase = true) ->
-        "checksum doesn't match the release"
+    release.sha256 == null -> "the release has no checksum"
+    !facts.sha256.equals(release.sha256, ignoreCase = true) -> "checksum doesn't match the release"
     facts.versionName == null || Version.parse(facts.versionName) != Version.parse(release.version) ->
         "APK is version ${facts.versionName}, release says ${release.version}"
     facts.versionCode <= installedVersionCode -> "APK isn't newer than the installed app"

@@ -227,7 +227,7 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
         try {
             withContext(Dispatchers.IO) {
                 // The session hashes what it writes and refuses anything but the checked APK.
-                val expected = release.sha256 ?: AppUpdater.sha256(file)
+                val expected = release.sha256 ?: throw ApkChangedException("the release has no checksum")
                 updater.installWithSession(file, expected)
             }
         } catch (e: ApkChangedException) {
