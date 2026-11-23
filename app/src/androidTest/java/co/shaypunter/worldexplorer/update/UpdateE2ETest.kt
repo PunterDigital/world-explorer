@@ -88,6 +88,8 @@ class UpdateE2ETest {
         prefs.clear()
         setInstallAllowed(false)
         AppUpdater(context).deleteDownloads()
+        // A session left by an earlier, crashed run.
+        AppUpdater(context).abandonOpenSessions()
     }
 
     @After
@@ -344,7 +346,10 @@ class UpdateE2ETest {
                 fail("a changed APK must not be committed")
             } catch (_: ApkChangedException) {
             }
-            assertTrue(context.packageManager.packageInstaller.mySessions.isEmpty())
+            // Android drops an abandoned session asynchronously.
+            waitUntil("the session to be abandoned") {
+                context.packageManager.packageInstaller.mySessions.isEmpty()
+            }
             Thread.sleep(2_000)
             assertTrue(confirmations.isEmpty())
         }
