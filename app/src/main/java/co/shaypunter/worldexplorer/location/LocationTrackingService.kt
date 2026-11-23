@@ -18,6 +18,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
+import co.shaypunter.worldexplorer.BuildConfig
 import co.shaypunter.worldexplorer.MainActivity
 import co.shaypunter.worldexplorer.R
 import co.shaypunter.worldexplorer.WorldExplorerApp
@@ -35,13 +36,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /**
- * Foreground service that polls the fused location provider on a battery-friendly
- * cadence and writes new exploration points into the database.
- *
- * The defaults below favour endurance over precision:
- *   - PRIORITY_BALANCED_POWER_ACCURACY uses cell/wifi when adequate
- *   - 30s interval, 15s fastest, 25m minimum displacement
- *   - dedup at half-radius keeps the DB small while standing still
+ * Foreground service that polls the fused location provider and writes new
+ * exploration points into the database. The request follows [trackingCadence]:
+ *   - app on screen: GPS every second;
+ *   - background and moving: GPS (PRIORITY_HIGH_ACCURACY) every 30 s;
+ *   - background and stationary for 5 minutes ([StationaryDetector]):
+ *     PRIORITY_BALANCED_POWER_ACCURACY every 3 minutes, back to GPS on the
+ *     first fix that shows movement (#5672);
+ *   - dedup at half-radius keeps the DB small while standing still.
+ * No wake lock is held between fixes: a location foreground service with the
+ * battery-optimisation exemption gets its fixes through Doze. Each fix takes
+ * a short wake lock (with a timeout) only while it's written.
  */
 class LocationTrackingService : LifecycleService() {
 
@@ -61,6 +66,12 @@ class LocationTrackingService : LifecycleService() {
     /** True while the activity is in STARTED state; drives the polling cadence. */
     private var foregroundActive: Boolean = false
 
+    /** Slows the background request down while the phone sits still. */
+    private val stationary = StationaryDetector()
+
+    /** The request registered now, so a cadence change re-registers only when it differs. */
+    private var registered: TrackingCadence? = null
+
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             val location = result.lastLocation ?: return
@@ -79,34 +90,58 @@ class LocationTrackingService : LifecycleService() {
             lastFixTimestamp = timestamp
             prefs.setLastFix(curLat, curLon, timestamp)
 
+            val accuracy = if (location.hasAccuracy()) location.accuracy else 0f
+            if (stationary.onFix(curLat, curLon, timestamp, accuracy)) {
+                Log.i(TAG, if (stationary.stationary) "Stationary: slowing down" else "Moving again")
+                startUpdates()
+            }
+
             // Tighter dedup when the activity is visible so the trail extends
             // smoothly with each fix; the default (half-radius) keeps the DB
             // small while running in the background.
             val dedup = if (foregroundActive) FG_DEDUP_METERS else UNLOCK_RADIUS_METERS * 0.5f
 
+            // Keep the CPU up just long enough to write this fix.
+            val lock = fixWakeLock()
             lifecycleScope.launch(Dispatchers.IO) {
-                if (prevLat != null && prevLon != null) {
-                    val gap = GapFiller.between(prevLat, prevLon, prevTs, curLat, curLon, timestamp)
-                    for (p in gap) {
-                        repository.recordIfNew(
-                            latitude = p.latitude,
-                            longitude = p.longitude,
-                            radiusMeters = UNLOCK_RADIUS_METERS,
-                            timestamp = timestamp,
-                            dedupRadiusMeters = dedup.toDouble()
-                        )
-                    }
+                try {
+                    record(prevLat, prevLon, prevTs, curLat, curLon, timestamp, dedup)
+                } finally {
+                    if (lock.isHeld) lock.release()
                 }
+            }
+        }
+    }
 
+    private suspend fun record(
+        prevLat: Double?,
+        prevLon: Double?,
+        prevTs: Long,
+        curLat: Double,
+        curLon: Double,
+        timestamp: Long,
+        dedup: Float
+    ) {
+        if (prevLat != null && prevLon != null) {
+            val gap = GapFiller.between(prevLat, prevLon, prevTs, curLat, curLon, timestamp)
+            for (p in gap) {
                 repository.recordIfNew(
-                    latitude = curLat,
-                    longitude = curLon,
+                    latitude = p.latitude,
+                    longitude = p.longitude,
                     radiusMeters = UNLOCK_RADIUS_METERS,
                     timestamp = timestamp,
                     dedupRadiusMeters = dedup.toDouble()
                 )
             }
         }
+
+        repository.recordIfNew(
+            latitude = curLat,
+            longitude = curLon,
+            radiusMeters = UNLOCK_RADIUS_METERS,
+            timestamp = timestamp,
+            dedupRadiusMeters = dedup.toDouble()
+        )
     }
 
     override fun onCreate() {
@@ -137,6 +172,7 @@ class LocationTrackingService : LifecycleService() {
                 lastFixLat = null
                 lastFixLon = null
                 lastFixTimestamp = 0L
+                stationary.reset()
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -189,13 +225,12 @@ class LocationTrackingService : LifecycleService() {
             return
         }
 
-        // Cadence swaps based on whether the activity is currently visible.
         // Foreground: aggressive updates so the user sees their discs land
-        // almost continuously as they walk; battery cost only applies while
-        // the screen is on. Background: the original endurance settings.
-        val interval = if (foregroundActive) FG_UPDATE_INTERVAL_MS else UPDATE_INTERVAL_MS
-        val fastest = if (foregroundActive) FG_FASTEST_INTERVAL_MS else FASTEST_INTERVAL_MS
-        val minDistance = if (foregroundActive) FG_MIN_DISTANCE_M else MIN_DISTANCE_M
+        // almost continuously as they walk (the screen is on anyway).
+        // Background: GPS every 30 s, or balanced every few minutes while the
+        // phone sits still.
+        val cadence = trackingCadence(foregroundActive, stationary.stationary)
+        if (cadence == registered) return
 
         // Remove any previous registration so the new cadence takes effect
         // (requestLocationUpdates with the same callback doesn't replace —
@@ -203,11 +238,11 @@ class LocationTrackingService : LifecycleService() {
         fusedClient.removeLocationUpdates(locationCallback)
 
         val request = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY,
-            interval
+            if (cadence.highAccuracy) Priority.PRIORITY_HIGH_ACCURACY else Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+            cadence.intervalMs
         )
-            .setMinUpdateIntervalMillis(fastest)
-            .setMinUpdateDistanceMeters(minDistance)
+            .setMinUpdateIntervalMillis(cadence.fastestMs)
+            .setMinUpdateDistanceMeters(cadence.minDistanceMeters)
             .setGranularity(Granularity.GRANULARITY_PERMISSION_LEVEL)
             .setWaitForAccurateLocation(false)
             .build()
@@ -217,42 +252,29 @@ class LocationTrackingService : LifecycleService() {
             locationCallback,
             Looper.getMainLooper()
         )
-        acquireWakeLock()
+        registered = cadence
+        if (BuildConfig.DEBUG) registeredCadenceForTest = cadence
     }
 
     private fun stopUpdates() {
         fusedClient.removeLocationUpdates(locationCallback)
-        releaseWakeLock()
+        registered = null
+        if (BuildConfig.DEBUG) registeredCadenceForTest = null
     }
-
-    private var wakeLock: PowerManager.WakeLock? = null
 
     /**
-     * Hold a partial wake lock for the lifetime of an active tracking session.
-     * Without this the CPU sleeps with the screen and location callbacks get
-     * batched at Doze maintenance windows — which is what causes the
-     * "three disconnected trails on a drive" symptom: the provider only
-     * delivers fixes when the OS decides to wake up.
-     *
-     * Foreground-service notification + wake lock together survive Doze;
-     * battery cost is small while the user is actually moving and zero when
-     * the service is stopped.
+     * A wake lock for writing one fix, released when the write is done and
+     * by itself after [FIX_WAKE_LOCK_TIMEOUT_MS] at the latest. Tracking used
+     * to hold one with no timeout for the whole session (#5672: the CPU never
+     * slept, all day); the foreground service and the battery-optimisation
+     * exemption are what keep fixes coming through Doze.
      */
-    private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
+    private fun fixWakeLock(): PowerManager.WakeLock {
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "WorldExplorer:LocationTracking"
-        ).apply {
+        return pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, FIX_WAKE_LOCK_TAG).apply {
             setReferenceCounted(false)
-            acquire()
+            acquire(FIX_WAKE_LOCK_TIMEOUT_MS)
         }
-    }
-
-    private fun releaseWakeLock() {
-        wakeLock?.let { if (it.isHeld) it.release() }
-        wakeLock = null
     }
 
     /**
@@ -321,18 +343,14 @@ class LocationTrackingService : LifecycleService() {
         private const val NOTIFICATION_ID = 4242
         private const val TAG = "LocationTracking"
 
-        // Background (screen off or activity gone) cadence — endurance over
-        // precision.
-        private const val UPDATE_INTERVAL_MS = 30_000L
-        private const val FASTEST_INTERVAL_MS = 15_000L
-        private const val MIN_DISTANCE_M = 25f
+        /** Test hook (debug builds only): the request the running service registered. */
+        @Volatile
+        var registeredCadenceForTest: TrackingCadence? = null
 
-        // Foreground (activity visible) cadence — aggressive so the trail
-        // appears to extend almost in real time as the user walks. Battery is
-        // fine because the screen has to be on for this branch to apply.
-        private const val FG_UPDATE_INTERVAL_MS = 1_000L
-        private const val FG_FASTEST_INTERVAL_MS = 500L
-        private const val FG_MIN_DISTANCE_M = 5f
+        /** Held only while one fix is written (see fixWakeLock). */
+        const val FIX_WAKE_LOCK_TAG = "WorldExplorer:RecordFix"
+        private const val FIX_WAKE_LOCK_TIMEOUT_MS = 10_000L
+
         // Tighter dedup while in foreground — new discs land every ~15 s of
         // brisk walking instead of every ~70 s, which is what makes the trail
         // feel like it's growing in real time.

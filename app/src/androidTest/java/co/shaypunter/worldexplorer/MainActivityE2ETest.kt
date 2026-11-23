@@ -13,6 +13,7 @@ import android.view.View
 import android.widget.TextView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.Lifecycle
 import androidx.room.withTransaction
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -30,6 +31,8 @@ import co.shaypunter.worldexplorer.data.ExploredPoint
 import co.shaypunter.worldexplorer.data.TrackingPreferences
 import co.shaypunter.worldexplorer.location.BootReceiver
 import co.shaypunter.worldexplorer.location.LocationTrackingService
+import co.shaypunter.worldexplorer.location.MOVING_CADENCE
+import co.shaypunter.worldexplorer.location.STATIONARY_CADENCE
 import co.shaypunter.worldexplorer.update.UpdatePreferences
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.tasks.Tasks
@@ -135,6 +138,46 @@ class MainActivityE2ETest {
             waitUntil("tracking to restart") { TrackingPreferences(context).trackingEnabled }
             onView(withId(R.id.trackingDot)).check(matches(isDisplayed()))
         }
+    }
+
+    @Test
+    fun backgroundTrackingSlowsDownWhileStationary() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            waitUntil("tracking to start") { TrackingPreferences(context).trackingEnabled }
+            Tasks.await(fused.setMockMode(true), 60, TimeUnit.SECONDS)
+            // Off screen: the background cadence (GPS every 30 s).
+            scenario.moveToState(Lifecycle.State.CREATED)
+            waitUntil("the background cadence") {
+                LocationTrackingService.registeredCadenceForTest == MOVING_CADENCE
+            }
+            assertNoTrackingWakeLock()
+
+            // The stationary check goes by the fixes' own times, so a fix
+            // "six minutes later" at the same spot settles it without waiting.
+            val t0 = System.currentTimeMillis()
+            val prefs = TrackingPreferences(context)
+            waitUntil("the first background fix", timeoutMs = 60_000) {
+                Tasks.await(fused.setMockLocation(mockFix(51.5007, -0.1246, t0)), 10, TimeUnit.SECONDS)
+                prefs.lastFix?.timestamp == t0
+            }
+            waitUntil("the request to drop to balanced", timeoutMs = 90_000) {
+                Tasks.await(fused.setMockLocation(mockFix(51.5009, -0.1246, t0 + 6 * 60_000L)), 10, TimeUnit.SECONDS)
+                LocationTrackingService.registeredCadenceForTest == STATIONARY_CADENCE
+            }
+            assertNoTrackingWakeLock()
+
+            // 500 m north: moving again, back to GPS.
+            waitUntil("the request to go back to high accuracy", timeoutMs = 240_000) {
+                Tasks.await(fused.setMockLocation(mockFix(51.5052, -0.1246, t0 + 7 * 60_000L)), 10, TimeUnit.SECONDS)
+                LocationTrackingService.registeredCadenceForTest == MOVING_CADENCE
+            }
+        }
+    }
+
+    /** Tracking used to hold a wake lock with no timeout all day (#5672). */
+    private fun assertNoTrackingWakeLock() {
+        val power = shell("dumpsys power")
+        assertFalse("tracking wake lock held: $power", power.contains("WorldExplorer:LocationTracking"))
     }
 
     @Test
@@ -291,11 +334,11 @@ class MainActivityE2ETest {
     private fun formatPercent(areaM2: Double) =
         String.format(Locale.US, "%08.5f%%", areaM2 / 148_940_000_000_000.0 * 100.0)
 
-    private fun mockFix(lat: Double, lon: Double) = Location("fused").apply {
+    private fun mockFix(lat: Double, lon: Double, timeMs: Long = System.currentTimeMillis()) = Location("fused").apply {
         latitude = lat
         longitude = lon
         accuracy = 5f
-        time = System.currentTimeMillis()
+        time = timeMs
         elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
     }
 
