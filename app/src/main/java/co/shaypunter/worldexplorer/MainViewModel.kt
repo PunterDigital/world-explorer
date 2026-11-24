@@ -8,6 +8,8 @@ import co.shaypunter.worldexplorer.data.ExploredArea
 import co.shaypunter.worldexplorer.data.ExploredPoint
 import co.shaypunter.worldexplorer.data.ExploredRepository
 import co.shaypunter.worldexplorer.data.TrackingPreferences
+import co.shaypunter.worldexplorer.ui.FogIndexBuilder
+import co.shaypunter.worldexplorer.ui.FogScene
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -52,6 +54,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList()
+        )
+
+    private val fogIndex = FogIndexBuilder()
+
+    /** The points laid out for the fog overlay, built off the main thread (#5674). */
+    val fogScene: StateFlow<FogScene> = points
+        .map { pts -> fogIndex.update(pts) }
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = FogScene.EMPTY
         )
 
     private val exploredArea = ExploredArea()
