@@ -9,11 +9,30 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ExploredPointDao {
 
-    @Query("SELECT * FROM explored_points ORDER BY id ASC")
-    fun observeAll(): Flow<List<ExploredPoint>>
-
+    /** The whole table. The UI reads it once per app open (see [PointsFeed]). */
     @Query("SELECT * FROM explored_points ORDER BY id ASC")
     suspend fun getAll(): List<ExploredPoint>
+
+    /** Points recorded after [afterId], in recording order. */
+    @Query("SELECT * FROM explored_points WHERE id > :afterId ORDER BY id ASC")
+    suspend fun getAfter(afterId: Long): List<ExploredPoint>
+
+    /**
+     * Points after [watermark] plus the [context] points just before it (or
+     * from the start, if there are fewer): what [TrailSmoother] needs to
+     * smooth the new points, without reading the history.
+     */
+    @Query(
+        """
+        SELECT * FROM explored_points
+        WHERE id >= COALESCE(
+            (SELECT id FROM explored_points WHERE id <= :watermark
+             ORDER BY id DESC LIMIT 1 OFFSET :context - 1),
+            0)
+        ORDER BY id ASC
+        """
+    )
+    suspend fun getSmoothingWindow(watermark: Long, context: Int): List<ExploredPoint>
 
     @Query(
         """
@@ -32,8 +51,15 @@ interface ExploredPointDao {
     @Query("SELECT MAX(id) FROM explored_points")
     suspend fun maxId(): Long?
 
+    /** Emits again whenever the table changes; the UI uses it to fetch only new rows. */
+    @Query("SELECT MAX(id) FROM explored_points")
+    fun observeMaxId(): Flow<Long?>
+
     @Insert
     suspend fun insert(point: ExploredPoint): Long
+
+    @Insert
+    suspend fun insertAll(points: List<ExploredPoint>)
 
     @Update
     suspend fun updateAll(points: List<ExploredPoint>)

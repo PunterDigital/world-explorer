@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.cos
+import kotlin.random.Random
 
 class TrailSmootherTest {
 
@@ -106,7 +107,46 @@ class TrailSmootherTest {
         assertEquals(7L, result.smoothedUpToId)
     }
 
+    @Test
+    fun smoothingOnlyTheNewPointsAndTheirNeighboursMatchesTheWholeHistory() {
+        // The app reads only the points after the watermark plus the
+        // WINDOW_RADIUS before it (ExploredPointDao.getSmoothingWindow, #5676).
+        // Noisy wandering trips with gaps, and every possible watermark.
+        val random = Random(5676)
+        val offsets = mutableListOf<Xy>()
+        val times = mutableListOf<Long>()
+        var x = 0.0
+        var y = 0.0
+        var t = 0L
+        repeat(400) { i ->
+            x += 20.0 + random.nextDouble() * 30.0
+            y += (random.nextDouble() - 0.5) * 20.0
+            t += if (i > 0 && random.nextInt(25) == 0) 10L * 60_000L else 1_000L
+            offsets += xy(x, y)
+            times += t
+        }
+        val pts = trail(offsets).mapIndexed { i, p -> p.copy(timestamp = times[i]) }
+
+        var smoothedSomething = false
+        for (watermark in 0L..pts.size + 2L) {
+            val full = TrailSmoother.smooth(pts, watermark)
+            val window = smoothingWindow(pts, watermark)
+            assertEquals("watermark $watermark", full, TrailSmoother.smooth(window, watermark))
+            assertTrue(full.updates.all { it.id > watermark })
+            smoothedSomething = smoothedSomething || full.updates.isNotEmpty()
+        }
+        assertTrue(smoothedSomething)
+    }
+
     // --- helpers -------------------------------------------------------------
+
+    /** What getSmoothingWindow selects (ExploredRepositoryTest checks the SQL agrees). */
+    private fun smoothingWindow(points: List<ExploredPoint>, watermark: Long): List<ExploredPoint> {
+        val before = points.count { it.id <= watermark }
+        val from = (before - TrailSmoother.WINDOW_RADIUS).coerceAtLeast(0)
+        return points.subList(from, points.size)
+    }
+
 
     private data class Xy(val x: Double, val y: Double)
 

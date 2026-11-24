@@ -34,14 +34,16 @@ object TrailSmoother {
     )
 
     /**
-     * @param points the whole history, ordered by id (recording order).
+     * @param points the history ordered by id (recording order): all of it, or
+     *   the points after [smoothedUpToId] plus the [windowRadius] points before
+     *   them, which gives the same result (TrailSmootherTest checks it).
      * @param smoothedUpToId watermark from the previous run; points up to it
      *   are only used as neighbours, never moved again.
      */
     fun smooth(
         points: List<ExploredPoint>,
         smoothedUpToId: Long,
-        windowRadius: Int = 2,
+        windowRadius: Int = WINDOW_RADIUS,
         minDeltaMeters: Double = 1.0,
         maxDeltaMeters: Double = 80.0,
         maxTurnDegrees: Double = 30.0,
@@ -141,4 +143,7 @@ object TrailSmoother {
     }
 
     private const val METERS_PER_DEGREE_LAT = 111_320.0
+
+    /** Neighbours used either side of a point. */
+    const val WINDOW_RADIUS = 2
 }

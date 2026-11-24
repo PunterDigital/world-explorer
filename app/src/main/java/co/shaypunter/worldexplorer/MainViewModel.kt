@@ -11,6 +11,8 @@ import co.shaypunter.worldexplorer.data.TrackingPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -18,11 +20,34 @@ import kotlinx.coroutines.launch
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository = ExploredRepository(
-        AppDatabase.get(application).exploredPointDao()
-    )
+    private val repository = ExploredRepository(AppDatabase.get(application))
 
-    val points: StateFlow<List<ExploredPoint>> = repository.pointsFlow
+    /**
+     * One-shot cleanup that flattens GPS-noise bumps in points recorded since
+     * the last pass. Each point is smoothed at most once. It's the only thing
+     * that changes existing rows, so it runs before the point list is first
+     * read: after that the list only gets new rows appended (#5676).
+     */
+    private val smoothing = viewModelScope.launch(Dispatchers.IO) {
+        val prefs = TrackingPreferences(getApplication())
+        val watermark = prefs.smoothedUpToId
+        prefs.smoothedUpToId = if (watermark == null) {
+            // First run of the watermarked smoother. Older builds re-smoothed
+            // the whole history on every launch, so treat what's there as
+            // done rather than pulling its curves straighter again.
+            repository.maxId()
+        } else {
+            repository.smoothTrail(watermark)
+        }
+    }
+
+    private val feed = repository.pointsFeed()
+
+    val points: StateFlow<List<ExploredPoint>> = flow {
+        smoothing.join()
+        emitAll(feed.flow())
+    }
+        .flowOn(Dispatchers.IO)
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -50,23 +75,4 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = 0.0
         )
-
-    /**
-     * Fire-and-forget cleanup pass that flattens GPS-noise bumps in points
-     * recorded since the last pass. Each point is smoothed at most once.
-     */
-    fun smoothTrailOnce() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val prefs = TrackingPreferences(getApplication())
-            val watermark = prefs.smoothedUpToId
-            prefs.smoothedUpToId = if (watermark == null) {
-                // First run of the watermarked smoother. Older builds re-smoothed
-                // the whole history on every launch, so treat what's there as
-                // done rather than pulling its curves straighter again.
-                repository.maxId()
-            } else {
-                repository.smoothTrail(watermark)
-            }
-        }
-    }
 }
