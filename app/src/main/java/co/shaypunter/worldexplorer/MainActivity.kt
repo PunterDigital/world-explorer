@@ -326,8 +326,8 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
-                    viewModel.points.collectLatest { pts ->
-                        fogOverlay.setPoints(pts)
+                    viewModel.fogScene.collectLatest { scene ->
+                        fogOverlay.setScene(scene)
                         binding.mapView.postInvalidate()
                     }
                 }

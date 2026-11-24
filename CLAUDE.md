@@ -183,6 +183,23 @@ export JAVA_HOME="/c/Program Files/Java/jdk-21.0.11"
   rows while the app is open won't reach the map unless the feed re-reads.
   The service writes a fix and its gap fill in one transaction
   (`recordAllIfNew`): one table invalidation per fix, not one per point.
+- The fog (`ui/FogOverlay`, #5674) draws from a `FogIndex`: every point's
+  Web-Mercator position sorted along a Z-order curve, built off the main
+  thread in `MainViewModel.fogScene` (`FogIndexBuilder`: new points go into a
+  small "recent" index, everything is re-sorted once it passes 256). A frame
+  looks up the few quadtree cells around the view with binary searches and
+  allocates nothing: one unit `RadialGradient` moved into place with
+  `canvas.translate`/`scale`. Below `DOT_RADIUS_PX` (12 px) it draws one round
+  dot per pixel-sized cell in a single `drawPoints`. Screen positions copy
+  osmdroid's own rounding (`floor(x * worldMapSize)` + the projection's offset),
+  so the fog matches what `Projection.toPixels` gave; no map rotation.
+  `FogOverlayTest` compares it with `LegacyFogOverlay` (the pre-#5674 code, in
+  androidTest) pixel by pixel at zoom 16 / 12 / 5, times both and counts
+  allocations with `Debug.getThreadAllocCount` (still works on ART). Its PNGs
+  come back in `app/build/outputs/managed_device_android_test_additional_output/`
+  (written to the `additionalTestOutputDir` instrumentation argument).
+  Don't pass a fine cell level to `FogIndex.forEachIn` for a big box: it walks
+  every cell in it (a JVM test at level 21 ran for half an hour).
 - `ExploredRepositoryTest` counts statements with a Room `QueryCallback`.
   Room's own insert transactions nest inside an outer one, and the
   invalidation tracker's refresh (`room_table_modification_log`) runs a
